@@ -15,6 +15,9 @@ reduction/web_*.png
 # Notebook backup
 etc_original_backup.ipynb
 
+# Exported ETC result files (downloaded by the user via the Export button)
+etc_*.txt
+
 # Claude Code local config
 .claude/
 

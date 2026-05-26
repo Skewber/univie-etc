@@ -122,6 +122,12 @@ label.radio input { width: auto; }
   gap: .75rem; margin-bottom: .4rem;
 }
 .results-head h2 { margin: 0; }
+.input-warning {
+  margin-top: .5rem; padding: .55rem .75rem;
+  border: 1px solid #f59e0b; border-radius: 6px;
+  background: rgba(245, 158, 11, .12); color: #fcd34d;
+  font-size: .82rem; line-height: 1.35;
+}
 #export-btn {
   background: var(--accent, #22d3ee); color: #051018;
   border: 0; border-radius: 6px; padding: .35rem .8rem;

@@ -66,11 +66,12 @@ function moonFactor(illum, sepDeg, X) {
   if (Bmoon_nL <= 0) return 1;
   const mu_moon = (20.7233 - Math.log(Bmoon_nL / 34.08)) / 0.92104; // V mag/arcsec^2
 
-  // dark V sky surface brightness, from our measured per-pixel rate
+  // Dark-sky observed V surface brightness, from our measured per-pixel rate.
+  // The measured sky rate is already the rate *at* the observation airmass --
+  // it is not an above-atmosphere quantity -- so no extinction term here.
   const sBin2 = C.pixel_scale_arcsec_unbinned * 2; // reference binning 2
   const dark_per_arcsec2 = C.filters.V.sky_rate_e_per_s_per_pix / (sBin2 * sBin2);
-  const mu_dark = C.filters.V.zeropoint_mag_1es - kV * X -
-                  2.5 * Math.log10(dark_per_arcsec2);
+  const mu_dark = C.filters.V.zeropoint_mag_1es - 2.5 * Math.log10(dark_per_arcsec2);
   return 1 + Math.pow(10, -0.4 * (mu_moon - mu_dark));
 }
 function darkRate(binning, tempC) {
@@ -164,10 +165,27 @@ function buildExtended(inp, b) {
 
 // Resolve the exposure structure into total time T, sub count N, and per-sub
 // (frame) time, honouring the solve mode (time vs snr) and exposure structure.
-function resolveExposure(inp, S, nPix, Rsky, Rdark, Nread) {
+// `src` is the {signalRate, nPix, peakRate} triple from buildPoint/buildExtended.
+function resolveExposure(inp, src, Rsky, Rdark, Nread, gain) {
+  const S = src.signalRate, nPix = src.nPix;
   const em = inp.expmode;
   const N0 = Math.max(1, Math.round(inp.nsub || 1));
   const L0 = inp.subexp > 0 ? inp.subexp : 1;
+
+  // "Fixed total time": total is given, N is the smallest integer such that
+  // each sub stays below the saturation safety threshold. Solve mode is ignored
+  // here because the total is already specified.
+  if (em === "total") {
+    const T = Math.max(0.01, inp.exptime);
+    const satFrac = Math.min(1, Math.max(0.05, (inp.satlimit || 70) / 100));
+    const satE = C.camera.saturation_adu * gain * satFrac;
+    const peakPerSec = src.peakRate + Rsky + Rdark;
+    const tSubMax = peakPerSec > 0 ? satE / peakPerSec : T;
+    const N = Math.max(1, Math.ceil(T / tSubMax));
+    return { t: T, nSub: N,
+             snr: snrForTime(S, T, nPix, Rsky, Rdark, Nread, N),
+             tSubMax };
+  }
 
   if (inp.mode === "snr") {                    // exposure given -> compute SNR
     let T, N;
@@ -198,10 +216,10 @@ function compute(inp) {
   const b = obsBrightness(inp);
   const src = inp.ttype === "extended" ? buildExtended(inp, b) : buildPoint(inp, b);
 
-  const ex = resolveExposure(inp, src.signalRate, src.nPix, Rsky, Rdark, Nread);
+  const gain = C.camera.gain_e_per_adu;
+  const ex = resolveExposure(inp, src, Rsky, Rdark, Nread, gain);
   const t = ex.t, snr = ex.snr, nSub = ex.nSub;
   const tFrame = nSub > 1 ? t / nSub : t;      // per-frame time (saturation)
-  const gain = C.camera.gain_e_per_adu;
   const sBinned = C.pixel_scale_arcsec_unbinned * inp.binning;
   const peakE = peakElectrons(src.peakRate, tFrame, Rsky, Rdark);
 
@@ -209,6 +227,22 @@ function compute(inp) {
   const tRead = (C.camera.readout_time_s && C.camera.readout_time_s[inp.readmode])
                 || 1.0;
   const wallTime = nSub * (tFrame + tRead);
+
+  // Input-sanity warnings (shown to the user; don't change the math).
+  const warnings = [];
+  if (inp.airmass > 5) {
+    const alt = 90 - Math.acos(Math.min(1, 1 / inp.airmass)) * 180 / Math.PI;
+    warnings.push(
+      `High airmass: X=${inp.airmass.toFixed(2)} corresponds to altitude ≈ ` +
+      `${alt.toFixed(1)}°. Extinction at this X dims the source by ` +
+      `${(C.filters[inp.filter].extinction_k * inp.airmass).toFixed(1)} mag in ` +
+      `${inp.filter} — typical observing uses X = 1–2.5.`);
+  }
+  if (inp.moonillum_raw > 1) {
+    warnings.push(
+      `Moon illumination ${inp.moonillum_raw} is outside the physical 0–1 ` +
+      `range; clamped to 1.0 (full moon). Use a fraction, not a percentage.`);
+  }
 
   // Limiting in-band magnitude at S/N = SIGMA_LIM, for the same setup
   // (aperture, t, sub count, conditions). Defined for point sources;
@@ -226,7 +260,7 @@ function compute(inp) {
 
   return {
     ...src, b, Rsky, Rdark, Nread, gain, t, snr, nSub, tFrame, sBinned, peakE,
-    moonMult, tRead, wallTime, mLim,
+    moonMult, tRead, wallTime, mLim, warnings,
     peakADU: peakE / gain,
     satPct: peakE / gain / C.camera.saturation_adu * 100,
     fwhmSampling: inp.seeing / sBinned,
@@ -258,12 +292,14 @@ function readInputs() {
     exptime: num("exptime"),
     subexp: num("subexp"),
     nsub: num("nsub"),
+    satlimit: num("satlimit"),
     cooltemp: num("cooltemp"),
     airmass: num("airmass"),
     seeing: num("seeing"),
     skymult: num("skymult"),
-    moonillum: num("moonillum"),
-    moonsep: num("moonsep"),
+    moonillum: Math.min(1, Math.max(0, num("moonillum") || 0)), // clamp to [0,1]
+    moonsep: Math.min(180, Math.max(0, num("moonsep") || 0)),
+    moonillum_raw: num("moonillum"),                            // for the warning
     binning: parseInt(val("binning"), 10),
     readmode: val("readmode"),
     aperture: num("aperture"),
@@ -351,6 +387,14 @@ function renderResults(inp, r) {
   }
 
   renderExpDerived(inp, r);
+
+  const warnBox = document.getElementById("input-warnings");
+  if (r.warnings && r.warnings.length) {
+    warnBox.innerHTML = r.warnings.map((w) =>
+      `<div class="input-warning">⚠ ${w}</div>`).join("");
+  } else {
+    warnBox.innerHTML = "";
+  }
 }
 
 // Inline readout of the complementary exposure quantity, next to the fields.
@@ -361,9 +405,20 @@ function renderExpDerived(inp, r) {
   }
   el.classList.remove("hidden");
   const L = r.tFrame, N = r.nSub, T = r.t;
-  if (inp.expmode === "nsub_len") {
-    el.innerHTML = `${N} × ${L.toFixed(1)} s &nbsp;→&nbsp; total <b>${fmtTime(T)}</b>` +
+  if (inp.expmode === "total") {
+    el.innerHTML = `total <b>${fmtTime(T)}</b> &nbsp;→&nbsp; ` +
+      `<b>${N}</b> sub${N > 1 ? "s" : ""} of <b>${L.toFixed(1)} s</b> ` +
+      `<small>(each sub ≤ ${inp.satlimit | 0}% of full well; achieved S/N ` +
+      `${r.snr.toFixed(1)})</small>`;
+  } else if (inp.expmode === "nsub_len") {
+    let html = `${N} × ${L.toFixed(1)} s &nbsp;→&nbsp; total <b>${fmtTime(T)}</b>` +
       (inp.mode === "time" ? " &nbsp;(N from target SNR)" : "");
+    if (inp.mode === "time" && N === 1 && r.snr > 1.3 * inp.snr) {
+      html += `<br><small>⚠ a single ${L.toFixed(0)} s sub already overshoots S/N ` +
+        `${inp.snr} (achieved ${r.snr.toFixed(0)}). Reduce the sub length to ` +
+        `step finer, or switch to "Fixed total time" to size subs by saturation.</small>`;
+    }
+    el.innerHTML = html;
   } else { // split
     el.innerHTML = `total <b>${fmtTime(T)}</b> ÷ ${N} &nbsp;→&nbsp; ` +
       `sub <b>${L.toFixed(1)} s</b>` + (inp.mode === "time" ? " &nbsp;(total from target SNR)" : "");
@@ -409,8 +464,13 @@ function exportResults() {
   L.push(`Cooler temperature:  ${inp.cooltemp} C`);
   if (inp.ttype !== "extended") L.push(`Aperture:            ${inp.aperture} x FWHM`);
   L.push(`Exposure structure:  ${inp.expmode}`);
-  L.push(`Solve mode:          ${inp.mode === "time" ? "exposure-from-SNR" : "SNR-from-exposure"}`);
-  if (inp.mode === "time") L.push(`Target SNR:          ${inp.snr}`);
+  if (inp.expmode === "total") {
+    L.push(`  total time:        ${inp.exptime} s`);
+    L.push(`  saturation limit:  ${inp.satlimit} %  (per sub)`);
+  } else {
+    L.push(`Solve mode:          ${inp.mode === "time" ? "exposure-from-SNR" : "SNR-from-exposure"}`);
+    if (inp.mode === "time") L.push(`Target SNR:          ${inp.snr}`);
+  }
   L.push("");
   L.push("=== RESULTS ===");
   L.push(`Total exposure:      ${fmtTime(r.t)}  (${r.t.toFixed(2)} s)`);
@@ -619,15 +679,25 @@ function syncLabels() {
   // exposure-structure fields, per (solve mode, exposure structure)
   const mode = inp.mode, em = inp.expmode;
   const show = (id, on) => document.getElementById(id).classList.toggle("hidden", !on);
-  show("snr-input", mode === "time");          // target SNR drives the time solve
-  if (mode === "time") {                        // total is solved -> hide it
-    show("f-total", false);
-    show("f-sublen", em === "nsub_len");        // fixed sub length is the knob
-    show("f-nsub", em === "split");             // fixed N is the knob
-  } else {                                       // exposure given -> compute SNR
-    show("f-total", em !== "nsub_len");
-    show("f-sublen", em === "nsub_len");
-    show("f-nsub", em !== "single");
+  show("f-satlimit", em === "total");
+
+  if (em === "total") {
+    // total is user-given; N is derived from saturation; solve-mode is ignored.
+    show("snr-input", false);
+    show("f-total", true);
+    show("f-sublen", false);
+    show("f-nsub", false);
+  } else {
+    show("snr-input", mode === "time");
+    if (mode === "time") {                       // total is solved -> hide it
+      show("f-total", false);
+      show("f-sublen", em === "nsub_len");
+      show("f-nsub", em === "split");
+    } else {                                     // exposure given -> compute SNR
+      show("f-total", em !== "nsub_len");
+      show("f-sublen", em === "nsub_len");
+      show("f-nsub", em !== "single");
+    }
   }
   document.getElementById("f-total").childNodes[0].nodeValue =
     (em === "single" ? "Exposure time [s] " : "Total exposure time [s] ");

@@ -136,6 +136,34 @@ def main():
         page.select_option("#expmode", "split"); page.fill("#nsub", "4")
         page.wait_for_timeout(300); snap("time_split")
 
+        # 12b. "Fixed total time" -> auto-sized subs (1 h on a bright source)
+        page.fill("#mag", "12")  # bright -> saturation matters
+        page.select_option("#expmode", "total")
+        page.fill("#exptime", "3600"); page.fill("#satlimit", "70")
+        page.wait_for_timeout(300); snap("total_1h_mag12")
+
+        # 12c. "Fixed sub length" with too-long sub: should flag overshoot
+        page.fill("#mag", "14")
+        page.select_option("#expmode", "nsub_len")
+        page.check('input[name="mode"][value="time"]')
+        page.fill("#snr", "100"); page.fill("#subexp", "100")
+        page.wait_for_timeout(300); snap("nsublen_overshoot")
+
+        # 12d. V=4 at realistic airmass -> should be heavily saturated
+        page.select_option("#expmode", "single")
+        page.check('input[name="mode"][value="snr"]')
+        page.select_option("#binning", "2")
+        page.fill("#airmass", "1.2"); page.fill("#mag", "4"); page.fill("#exptime", "1")
+        page.wait_for_timeout(300); snap("bright_v4_realistic")
+
+        # 12e. Unphysical airmass + moon illum > 1 should fire input warnings
+        page.fill("#airmass", "42"); page.fill("#moonillum", "100")
+        page.wait_for_timeout(300); snap("bad_inputs_warning")
+        nwarn = page.eval_on_selector_all(".input-warning", "els => els.length")
+        print(f"  input-warnings shown: {nwarn}")
+        assert nwarn >= 2, f"expected >=2 input warnings, got {nwarn}"
+        page.fill("#airmass", "1.2"); page.fill("#moonillum", "0")
+
         # 13. moon: new -> full at 90 deg separation
         page.check('input[name="ttype"][value="point"]')
         page.check('input[name="mode"][value="snr"]')

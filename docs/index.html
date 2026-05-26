@@ -101,6 +101,7 @@
             <option value="single">Single exposure</option>
             <option value="nsub_len">Fixed sub-exposure length</option>
             <option value="split">Fixed number of subs</option>
+            <option value="total">Fixed total time (auto-size subs)</option>
           </select>
         </label>
         <label id="f-total">Total exposure time [s]
@@ -111,6 +112,11 @@
         </label>
         <label id="f-nsub">Number of subs
           <input id="nsub" type="number" value="5" step="1" min="1" />
+        </label>
+        <label id="f-satlimit" class="hidden">Max saturation per sub [%]
+          <input id="satlimit" type="number" value="70" step="5" min="10" max="100" />
+          <small>each sub is made just short enough to stay below this fraction
+            of the full well</small>
         </label>
         <div id="exp-derived" class="derived hidden"></div>
         <small id="exp-note">Read noise is paid once per sub; saturation is checked per sub.</small>
@@ -183,6 +189,7 @@
       </table>
 
       <div id="sat-warning" class="warning hidden"></div>
+      <div id="input-warnings"></div>
     </section>
 
     <!-- ---------------- PLOTS ---------------- -->
