@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Methods — Vienna 0.8 m ETC</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+          onload="renderMathInElement(document.body, {
+            delimiters: [
+              {left:'$$', right:'$$', display:true},
+              {left:'$',  right:'$',  display:false}
+            ]
+          });"></script>
+</head>
+<body class="methods-body">
+  <header>
+    <nav class="nav-row">
+      <a href="index.html">&larr; Calculator</a>
+      <span class="nav-spacer"></span>
+    </nav>
+    <h1>Methods &amp; formalism</h1>
+    <p class="sub">How the exposure time calculator turns inputs into numbers.
+      All formulas point to the function that implements them in
+      <a href="app.js"><code>app.js</code></a> or
+      <a href="sources.js"><code>sources.js</code></a>.</p>
+  </header>
+
+  <main class="methods">
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>Overview</h2>
+      <p>The calculator evaluates the standard CCD signal-to-noise equation for a
+        target observed through one of the broadband filters. The full chain is:</p>
+      <ol>
+        <li>Convert the entered magnitude to a detected electron rate
+          $R_\star$ using the per-filter zero point and extinction.</li>
+        <li>Build the per-pixel sky rate $R_\mathrm{sky}$ (including the moon
+          contribution) and dark rate $R_\mathrm{dark}$.</li>
+        <li>Plug into the SNR equation. Depending on the solve mode, either
+          evaluate SNR for a given time or invert the equation for time given a
+          target SNR.</li>
+        <li>Check peak-pixel saturation, compute the limiting magnitude, and
+          break down the noise variance.</li>
+      </ol>
+      <p class="m-note">The math has not changed since the calculator was first
+        deployed. Only the <em>numbers</em> behind the symbols change: the
+        instrumental constants below are loaded live from
+        <a href="constants.json"><code>constants.json</code></a> so this page
+        always shows what the calculator is actually using.</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>1. Photometry — magnitude to electron rate</h2>
+      <p>For each broadband filter $f$ the pipeline measures a zero point
+        $\mathrm{ZP}_f$ defined as the in-band magnitude that produces
+        $1\ \mathrm{e^-/s}$ above the atmosphere, and a first-order extinction
+        coefficient $k_f$ in mag/airmass. An object of magnitude $m$ observed at
+        airmass $X$ produces a detected rate
+        <span class="ref">(<code>fluxFor</code>)</span>:</p>
+
+      $$ R_\star \;=\; 10^{\,0.4\,\bigl(\mathrm{ZP}_f \;-\; (m + k_f\,X)\bigr)}
+         \qquad [\mathrm{e^-/s}] $$
+
+      <p>The inverse <span class="ref">(<code>magFor</code>)</span> turns a
+        measured rate back into an in-band magnitude — used for the limiting
+        magnitude and for the extended-source mean / peak surface brightness
+        reported in the results table:</p>
+
+      $$ m \;=\; \mathrm{ZP}_f - k_f\,X - 2.5\,\log_{10}(R_\star) $$
+
+      <p>For extended sources $R_\star$ is the rate <em>per arcsec²</em> when
+        the brightness is given as a surface brightness, otherwise it is the
+        total source rate and the spatial distribution is set by the chosen
+        profile (Section&nbsp;6).</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>2. Noise model and the SNR equation</h2>
+      <p>The detector noise has four independent contributions, all in
+        electrons:</p>
+      <ul>
+        <li><b>Source shot noise</b> — Poisson variance equal to the integrated
+          source signal $S\,t$.</li>
+        <li><b>Sky shot noise</b> — Poisson variance per pixel equal to
+          $R_\mathrm{sky}\,t$. Multiplied by the aperture pixel count
+          $n_\mathrm{pix}$.</li>
+        <li><b>Dark current</b> — Poisson variance per pixel
+          $R_\mathrm{dark}\,t$, also multiplied by $n_\mathrm{pix}$.</li>
+        <li><b>Read noise</b> — added once <em>per readout</em>, not per
+          second. With $N_\mathrm{sub}$ sub-exposures the total read variance
+          per pixel is $N_\mathrm{sub}\,N_R^2$.</li>
+      </ul>
+
+      <p>Combining them, with $S$ the source rate in the extraction aperture and
+        $n_\mathrm{pix}$ the aperture area in pixels
+        <span class="ref">(<code>snrForTime</code>)</span>:</p>
+
+      $$ \mathrm{SNR} \;=\; \frac{S\,t}{\sqrt{\,S\,t \;+\; n_\mathrm{pix}
+         \bigl[\,t\,(R_\mathrm{sky} + R_\mathrm{dark}) \;+\;
+         N_\mathrm{sub}\,N_R^{\,2}\bigr]\,}} $$
+
+      <p>The four variance contributions are what the doughnut chart in the main
+        app shows as percentages. Whichever dominates tells you which dial to
+        turn: source-limited → already photon-noise-bound; sky-limited → no
+        benefit from longer subs; read-limited → use longer subs, slower readout
+        (1 MHz), or binning; dark-limited → cool deeper.</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>3. Noise breakdown</h2>
+      <p>The doughnut chart in the main app slices the total noise variance
+        into its four contributions. Each is one term under the radical of the
+        SNR equation:</p>
+
+      $$ \begin{aligned}
+         \sigma^2_\mathrm{source} &= S\,t \\
+         \sigma^2_\mathrm{sky}    &= n_\mathrm{pix}\,R_\mathrm{sky}\,t \\
+         \sigma^2_\mathrm{dark}   &= n_\mathrm{pix}\,R_\mathrm{dark}\,t \\
+         \sigma^2_\mathrm{read}   &= n_\mathrm{pix}\,N_\mathrm{sub}\,N_R^{\,2}
+         \end{aligned} $$
+
+      <p>Three of the terms grow linearly with the integration time $t$; the
+        read term does not — read noise is paid once <em>per detector
+        readout</em>, so it scales with $N_\mathrm{sub}$ instead. The chart
+        shows each as a percentage of the total:</p>
+
+      $$ \sigma^2_\mathrm{tot} \;=\; \sigma^2_\mathrm{source} +
+         \sigma^2_\mathrm{sky} + \sigma^2_\mathrm{dark} + \sigma^2_\mathrm{read} $$
+
+      <p>The percentages are <b>variance</b> shares, not RMS shares. Noise
+        terms add in quadrature, so the square roots would not sum to 100&nbsp;%.
+        The variance form is the one that tells you which dial is worth
+        turning — halving a 50&nbsp;% slice removes more total noise than
+        halving a 5&nbsp;% one, regardless of how the RMS values look side by
+        side.</p>
+
+      <h3>Reading the chart — four regimes</h3>
+      <table class="kv const-kv">
+        <thead><tr><td>Dominant term</td><td>What it means</td><td>What helps</td></tr></thead>
+        <tbody>
+          <tr><td>Source (Poisson)</td>
+              <td>Already at the photon-counting floor for this target</td>
+              <td>Longer total integration; larger telescope</td></tr>
+          <tr><td>Sky</td>
+              <td>Sky photons swamp the source in the aperture</td>
+              <td>Smaller extraction aperture, narrower filter, lower airmass, no moon, darker site</td></tr>
+          <tr><td>Dark current</td>
+              <td>Cooler set-point is too warm for this integration</td>
+              <td>Lower the cooler set-point</td></tr>
+          <tr><td>Read noise</td>
+              <td>Too many short subs — read noise is paid each one</td>
+              <td>Longer subs, 1 MHz readout, on-chip binning</td></tr>
+        </tbody>
+      </table>
+
+      <h3>When is the read term negligible?</h3>
+      <p>For a sub-exposure of length $L$, the read variance per unit
+        integration time is $N_R^{\,2}/L$ per pixel. Comparing it to the sky
+        variance rate $R_\mathrm{sky}$ per pixel:</p>
+
+      $$ \frac{\sigma^2_\mathrm{read}}{\sigma^2_\mathrm{sky}}
+         \;=\; \frac{N_R^{\,2}}{R_\mathrm{sky}\,L} $$
+
+      <p>So the read term contributes less than ~10&nbsp;% of the sky variance
+        when</p>
+
+      $$ L \;\gtrsim\; \frac{10\,N_R^{\,2}}{R_\mathrm{sky}} $$
+
+      <div class="worked">
+        <p><b>Worked example — minimum sub length to be sky-limited.</b> With
+          $N_R^{8\mathrm{MHz}} = $
+          <span data-c="camera|read_noise_e|8 MHz" data-dp="2"></span>&nbsp;e<sup>&#8722;</sup>:</p>
+        <ul>
+          <li>V band, dark sky
+            ($R_\mathrm{sky} = $ <span data-c="filters|V|sky_rate_e_per_s_per_pix" data-dp="2"></span>
+            &nbsp;e<sup>&#8722;</sup>/s/px):
+            $L_\mathrm{min} \approx $ <span data-lmin="V"></span>&nbsp;s.</li>
+          <li>I band, dark sky
+            ($R_\mathrm{sky} = $ <span data-c="filters|I|sky_rate_e_per_s_per_pix" data-dp="2"></span>
+            &nbsp;e<sup>&#8722;</sup>/s/px):
+            $L_\mathrm{min} \approx $ <span data-lmin="I"></span>&nbsp;s.</li>
+        </ul>
+        <p>So in V under dark skies, subs of a couple of minutes already drop
+          read noise to a ~10&nbsp;% variance contribution; in I the sky is
+          dimmer, so individual subs need to be longer or the breakdown stays
+          read-noise-heavy. Bright sky (moon, twilight) shortens
+          $L_\mathrm{min}$; narrowband filters lengthen it dramatically.
+          That is the underlying reason narrowband observers run long single
+          subs while broadband observers can split into short subs without
+          paying much of a read-noise penalty.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>4. Solving for exposure time</h2>
+      <p>The "solve for time" mode inverts the SNR equation for $t$. The form of
+        the solution depends on how $N_\mathrm{sub}$ scales with $t$.</p>
+
+      <h3>Fixed number of reads</h3>
+      <p>When $N_\mathrm{sub}$ is fixed independent of $t$ (single exposure, or
+        a user-fixed sub count) the equation is a quadratic in $t$
+        <span class="ref">(<code>timeForSnrFixedReads</code>)</span>. Squaring
+        the SNR equation and rearranging:</p>
+
+      $$ S^2\,t^2 \;-\;
+         \mathrm{SNR}^2\bigl[S + n_\mathrm{pix}(R_\mathrm{sky}+R_\mathrm{dark})\bigr]\,t
+         \;-\; \mathrm{SNR}^2\,n_\mathrm{pix}\,N_\mathrm{sub}\,N_R^{\,2} \;=\; 0 $$
+
+      <p>Taking the positive root gives the time in closed form.</p>
+
+      <h3>Fixed sub-exposure length</h3>
+      <p>When each sub has a fixed length $L$, the read count grows linearly
+        with total time: $N_\mathrm{sub} \approx t/L$. The read-noise term
+        becomes a <em>rate</em> $n_\mathrm{pix} N_R^2 / L$ and the SNR equation
+        is linear in $t$ <span class="ref">(<code>timeForSnrFixedSubLen</code>)</span>:</p>
+
+      $$ t \;=\; \frac{\mathrm{SNR}^2\,\bigl[\,S + n_\mathrm{pix}(R_\mathrm{sky}+R_\mathrm{dark})
+         + n_\mathrm{pix}\,N_R^{\,2}/L\,\bigr]}{S^{\,2}} $$
+
+      <div class="worked">
+        <p><b>Worked example — quadratic solve.</b> A V=15 point source at
+          airmass $X = 1.2$, 2"&nbsp;seeing, 2×2 binning, 8 MHz readout,
+          dark sky, single exposure, target SNR&nbsp;=&nbsp;100.</p>
+        <p>From the constants in use: $\mathrm{ZP}_V = $ <span data-c="filters|V|zeropoint_mag_1es" data-dp="3"></span>,
+          $k_V = $ <span data-c="filters|V|extinction_k" data-dp="2"></span>,
+          $R_\mathrm{sky,V} = $ <span data-c="filters|V|sky_rate_e_per_s_per_pix" data-dp="2"></span>$\ \mathrm{e^-/s/px}$
+          (per bin-2 pixel — already what we want here),
+          $N_R^{8\mathrm{MHz}} = $ <span data-c="camera|read_noise_e|8 MHz" data-dp="2"></span>$\ \mathrm{e^-}$,
+          $R_\mathrm{dark}@{-5}^\circ$C $\approx$ <span data-c="camera|dark_current_e_per_s_at_-5C" data-dp="3"></span>$\ \mathrm{e^-/s/px}$.
+        </p>
+        <p>Source rate: $R_\star = 10^{0.4(22.124 - (15 + 0.15\cdot 1.2))}
+          \approx 781\ \mathrm{e^-/s}$. Aperture (3 × FWHM, pixel scale 0.559"
+          at bin&nbsp;2): radius $r = 1.5 \cdot 2/0.559 \approx 5.37$&nbsp;px,
+          so $n_\mathrm{pix} = \pi r^2 \approx 90.6$. Plugging into the
+          quadratic and taking the positive root gives $t \approx 12.8$&nbsp;s.</p>
+        <p>You can reproduce this in the calculator with the same inputs — the
+          headline should agree.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>5. Exposure structures</h2>
+      <p>Four sub-exposure modes are available
+        <span class="ref">(<code>resolveExposure</code>)</span>:</p>
+      <ul>
+        <li><b>Single</b> — one frame of length $t$; read noise paid once.</li>
+        <li><b>Fixed sub-exposure length</b> — sub length $L$ is given;
+          $N_\mathrm{sub}$ is derived from the total time (rounded up to a whole
+          sub). Time-solve uses the linear closed form above.</li>
+        <li><b>Fixed number of subs</b> — $N_\mathrm{sub}$ is given; sub length
+          is $t/N_\mathrm{sub}$. Time-solve uses the quadratic.</li>
+        <li><b>Fixed total time, auto-size subs</b> — total $T$ is given;
+          $N_\mathrm{sub}$ is chosen as the smallest integer such that each sub
+          stays below the saturation safety threshold (default 70 % of full
+          well). See the worked example below.</li>
+      </ul>
+
+      <div class="worked">
+        <p><b>Worked example — sub count from saturation.</b> The maximum sub
+          length is found by requiring that the peak per-pixel signal stay below
+          a fraction $\eta$ of the full well:</p>
+
+        $$ t_\mathrm{sub,max} \;=\; \frac{\eta\,Q_\mathrm{sat}\,g}{R_\mathrm{peak}
+           + R_\mathrm{sky} + R_\mathrm{dark}}, \qquad
+           N_\mathrm{sub} \;=\; \lceil T / t_\mathrm{sub,max} \rceil $$
+
+        <p>where $Q_\mathrm{sat}$ is the full-well in ADU
+          (<span data-c="camera|saturation_adu" data-dp="0"></span>) and $g$ is the gain
+          (<span data-c="camera|gain_e_per_adu" data-dp="3"></span>&nbsp;$\mathrm{e^-/ADU}$).
+          A bright star with $R_\mathrm{peak} = 5000\ \mathrm{e^-/s}$,
+          dark sky ($R_\mathrm{sky} \approx 20\ \mathrm{e^-/s/px}$),
+          $\eta = 0.7$ gives $t_\mathrm{sub,max} \approx
+          \frac{0.7 \cdot 65535 \cdot 1.50}{5000 + 20} \approx 13.7$&nbsp;s, so a
+          $T = 600$&nbsp;s total is split into
+          $\lceil 600/13.7 \rceil = 44$&nbsp;subs.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>6. Saturation and peak pixel</h2>
+      <p>The peak pixel accumulates source + sky + dark every second. For a
+        point source the peak per-pixel rate is the central value of a Gaussian
+        PSF (binned-pixel coordinates):</p>
+
+      $$ R_\mathrm{peak,point} \;=\; \frac{R_\star}{2\pi\sigma^2},
+         \qquad \sigma = \frac{\mathrm{FWHM}}{2.3548\,s_\mathrm{bin}} $$
+
+      <p>where $s_\mathrm{bin}$ is the binned-pixel scale in arcsec.
+        For an extended source the peak SB is seeing-limited — the mean flux
+        inside a seeing-FWHM disc centred on the source — so a cuspy profile
+        does not saturate harder than the PSF allows.</p>
+
+      <p>The peak ADU in a frame of length $t_\mathrm{frame}$
+        <span class="ref">(<code>peakElectrons</code>)</span>:</p>
+
+      $$ \mathrm{peak\,ADU} \;=\;
+         \bigl(R_\mathrm{peak} + R_\mathrm{sky} + R_\mathrm{dark}\bigr)
+         \,t_\mathrm{frame}\,/\,g $$
+
+      <p>Saturation is always checked <em>per sub</em>, never on the stacked
+        total. The traffic-light box reports the result against the
+        <span data-c="camera|saturation_adu" data-dp="0"></span> ADU full well.</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>7. Aperture and pixel area</h2>
+      <p>For a <b>point source</b> the extraction aperture is a circle of
+        diameter $D = a \cdot \mathrm{FWHM}$ (with the user's multiplier $a$,
+        default $a = 3$) <span class="ref">(<code>nPixPoint</code>)</span>:</p>
+
+      $$ n_\mathrm{pix} \;=\; \pi \left(\frac{a\,\mathrm{FWHM}}{2\,s_\mathrm{bin}}\right)^{\!2} $$
+
+      <p>For an <b>extended source</b> with a circular extraction aperture of
+        radius $r_\mathrm{ap}$ (arcsec) and a profile with cumulative enclosed
+        flux $f_\mathrm{enc}(r)$:</p>
+
+      $$ S \;=\; F_\mathrm{tot}\,f_\mathrm{enc}(r_\mathrm{ap}),
+         \qquad n_\mathrm{pix} \;=\; \pi\,r_\mathrm{ap}^2 / s_\mathrm{bin}^2 $$
+
+      <p>where $F_\mathrm{tot}$ is the total source rate (either entered
+        directly as a total magnitude, or derived from the entered mean surface
+        brightness by inverting
+        $F_\mathrm{tot} = \pi r_\mathrm{ap}^2 \cdot R_{\mathrm{SB}} / f_\mathrm{enc}(r_\mathrm{ap})$).
+        The three profiles supported are
+        <span class="ref">(<code>SRC.encFracBuilder</code>)</span>:</p>
+
+      $$ \begin{aligned}
+         \text{uniform:}\ & f_\mathrm{enc}(r) = (r/R)^2 \ \text{for}\ r \le R,\ 1\ \text{else} \\
+         \text{Gaussian (FWHM = size):}\ & f_\mathrm{enc}(r) = 1 - \exp\!\bigl(-r^2/2\sigma^2\bigr),\ \sigma = \text{FWHM}/2.3548 \\
+         \text{S\'ersic } n\,(\mathrm{R_e} = \text{size}/2):\ & I(r) \propto \exp\!\bigl[-b_n\bigl((r/R_e)^{1/n} - 1\bigr)\bigr]
+         \end{aligned} $$
+
+      <p>The Sérsic cumulative is tabulated numerically out to $12 R_e$ at
+        startup; lookup is linear interpolation.</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>8. Sky brightness — dark night plus moon</h2>
+      <p>The dark-sky electron rate per pixel
+        $R_\mathrm{sky,dark}$ was measured on a moonless night (column
+        <code>sky_rate_e_per_s_per_pix</code> in
+        <a href="constants.json"><code>constants.json</code></a>). The total
+        per-pixel sky rate used in the SNR equation is</p>
+
+      $$ R_\mathrm{sky}(\mathrm{filter},b) \;=\; R_\mathrm{sky,dark}\,
+         \cdot\,(b/2)^2 \,\cdot\, M_\mathrm{user} \,\cdot\, M_\mathrm{moon} $$
+
+      <p>where $b$ is the binning (the measurement is at bin&nbsp;2,
+        $(b/2)^2$ scales it to other binnings), $M_\mathrm{user}$ is the
+        manual "Sky brightness ×" multiplier, and $M_\mathrm{moon}$ is the
+        Krisciunas &amp; Schaefer (1991) moon-brightness model
+        <span class="ref">(<code>moonFactor</code>)</span>.</p>
+
+      <p>The moon model first turns the moon illumination fraction $f$ into the
+        phase angle $\alpha$ (degrees from new moon), then the moon's
+        out-of-atmosphere brightness $I^\star$, then the surface brightness it
+        adds at angular separation $\rho$ (deg) and airmass $X$:</p>
+
+      $$ \begin{aligned}
+         \alpha &= \arccos(2f - 1) \\
+         I^\star &= 10^{-0.4(3.84 + 0.026|\alpha| + 4\!\times\!10^{-9}\alpha^4)} \\
+         f(\rho) &= 10^{5.36}(1.06 + \cos^2\rho) + 10^{6.15 - \rho/40} \\
+         B_\mathrm{moon} &= f(\rho)\,I^\star\,10^{-0.4\,k_V X}\bigl(1 - 10^{-0.4\,k_V X}\bigr)
+         \end{aligned} $$
+
+      <p>$B_\mathrm{moon}$ is in nanolamberts; converting to a V mag/arcsec²
+        ($\mu_\mathrm{moon}$) and comparing to the measured dark-sky surface
+        brightness $\mu_\mathrm{dark}$ gives the multiplicative factor:</p>
+
+      $$ M_\mathrm{moon} \;=\; 1 + 10^{-0.4(\mu_\mathrm{moon} - \mu_\mathrm{dark})} $$
+
+      <div class="worked">
+        <p><b>Worked example — half-moon at 60° from target.</b> Illumination
+          $f = 0.5$ gives $\alpha = 90°$ (a half moon, first or last quarter).
+          $I^\star \approx 10^{-0.4 \cdot 6.50} \approx 2.5\times 10^{-3}$;
+          $f(60°) \approx 10^{5.36}\cdot 1.31 + 10^{6.15-1.5} \approx 3.4\times 10^{5}$.
+          At airmass 1.2 with $k_V = $ <span data-c="filters|V|extinction_k" data-dp="2"></span>,
+          the extinction factor $10^{-0.4 k_V X}(1 - 10^{-0.4 k_V X}) \approx 0.155$.
+          Result: $B_\mathrm{moon} \approx 130$&nbsp;nL, $\mu_\mathrm{moon} \approx 20.5$
+          mag/arcsec². The dark-sky V surface brightness comes from the measured
+          per-pixel rate via the V zero point. The ratio gives $M_\mathrm{moon}
+          \approx 4$ — i.e. the sky is roughly 4× brighter than on a moonless
+          night. Enter $f = 0.5$ and separation = 60° in the calculator to see
+          the live number.</p>
+        <p><em>Caveat:</em> the model is V-band and is applied uniformly to all
+          bands. It also assumes the moon is at the same altitude as the target;
+          a low moon below the horizon does not raise the sky at zenith. Useful
+          for planning, not for absolute photometry under bright moon.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>9. Dark current versus temperature</h2>
+      <p>The dark current is measured at one cooler set-point
+        (<span data-c="camera|dark_ref_temp_c" data-dp="0"></span>&nbsp;°C). For
+        other temperatures it is scaled by the standard CCD doubling law
+        <span class="ref">(<code>darkRate</code>)</span>:</p>
+
+      $$ R_\mathrm{dark}(T) \;=\; R_\mathrm{dark,ref}\,\cdot\,
+         2^{(T - T_\mathrm{ref}) / \Delta T_\mathrm{double}}\,\cdot\,(b/2)^2 $$
+
+      <p>With $R_\mathrm{dark,ref} = $
+        <span data-c="camera|dark_current_e_per_s_at_-5C" data-dp="3"></span>
+        $\mathrm{e^-/s/px}$ at
+        $T_\mathrm{ref} = $ <span data-c="camera|dark_ref_temp_c" data-dp="0"></span>&nbsp;°C
+        and a <b>provisional</b> doubling temperature
+        $\Delta T_\mathrm{double} = $ <span data-c="camera|dark_doubling_kelvin" data-dp="1"></span>&nbsp;K
+        — the latter is a typical literature value and should be replaced with a
+        fit to darks taken at several cooler set-points (see
+        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>).</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>10. Limiting magnitude</h2>
+      <p>The limiting magnitude reported in the results table is the faintest
+        in-band point-source magnitude that reaches a fixed S/N
+        ($\Sigma = 5$ by default) in the <em>same</em> aperture, total time,
+        sub structure, and observing conditions. Solving the SNR equation as
+        a quadratic in the source rate $S$:</p>
+
+      $$ S^2\,t^2 \;-\; \Sigma^2\,S\,t \;-\; \Sigma^2\,B \;=\; 0,
+         \qquad B \;=\; n_\mathrm{pix}\bigl[t(R_\mathrm{sky}+R_\mathrm{dark})
+         + N_\mathrm{sub}\,N_R^2\bigr] $$
+
+      <p>and taking the positive root,</p>
+
+      $$ S_\mathrm{lim} \;=\; \frac{\Sigma^2}{2t}\!\left(1 + \sqrt{1 + 4B/\Sigma^2}\right) $$
+
+      <p>Converting back to a magnitude with the inverse zero-point relation
+        gives $m_\mathrm{lim} = \mathrm{ZP}_f - k_f X - 2.5\log_{10} S_\mathrm{lim}$.
+        The limit is reported only for point sources, because the equivalent
+        for an extended source is a limiting <em>surface</em> brightness that
+        depends on the chosen profile and aperture and is therefore less
+        universal.</p>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>11. SED color helper (approximate)</h2>
+      <p>If you know the magnitude in one band but want to observe in another,
+        the calculator can apply an approximate color correction
+        <span class="ref">(<code>SED.bandMag</code>)</span>. Two options:</p>
+
+      <ul>
+        <li><b>Blackbody</b>: colors come from the Planck function at the chosen
+          temperature, zero-pointed on Vega (so an A0V analogue has zero
+          colors).</li>
+        <li><b>Spectral type / object template</b>: a hard-coded table of
+          $(B-V, V-R_c, V-I_c)$ values per type. Stellar values from Pecaut &amp;
+          Mamajek (2013); galaxy values from Fukugita+&nbsp;1995; emission-line
+          object colors are approximate broadband averages.</li>
+      </ul>
+
+      <p>V is used as the hub: the magnitude in any band is converted to V via
+        the table, then to the observing band:</p>
+
+      $$ m_V = m_\mathrm{ref} + \Delta m_{V \leftarrow \mathrm{ref}}, \qquad
+         m_\mathrm{obs} = m_V + \Delta m_{\mathrm{obs} \leftarrow V} $$
+
+      <div class="worked">
+        <p><b>Worked example — V mag of an M0 star observed in I.</b> The M0
+          row in the table has $V-I_c = 1.62$. A star with $V = 14.0$ would
+          appear in I-band at $m_I = m_V - (V-I_c) = 14.0 - 1.62 = 12.38$. The
+          calculator reports both numbers in the results table when the SED is
+          set to "M0".</p>
+        <p><b>Important caveat:</b> the empirical zero point for each filter
+          was anchored on stars (M67) whose SED is roughly solar. Applying it
+          to a strongly-coloured source (cool M dwarfs, hot O stars, emission
+          nebulae) introduces an error that the color helper does <em>not</em>
+          correct for — it only handles the cross-band magnitude conversion.
+          For emission-line objects in broadband filters the colors are very
+          approximate. For an in-filter magnitude with no conversion, leave
+          the SED on <em>Flat (none)</em>.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <section class="m-section">
+      <h2>12. Constants in use</h2>
+      <p>Values below are loaded live from
+        <a href="constants.json"><code>constants.json</code></a> and reflect
+        what the calculator is computing with right now. The
+        <em>provisional</em> tags mark values that are either literature
+        substitutes or single-measurement assumptions; see
+        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>
+        for the acquisition plan that will replace them.</p>
+
+      <h3>Camera</h3>
+      <table class="kv const-kv">
+        <tbody>
+          <tr><td>Gain</td><td><span data-c="camera|gain_e_per_adu" data-dp="3"></span>&nbsp;e<sup>&#8722;</sup>/ADU</td></tr>
+          <tr><td>Read noise (8 MHz)</td><td><span data-c="camera|read_noise_e|8 MHz" data-dp="2"></span>&nbsp;e<sup>&#8722;</sup></td></tr>
+          <tr><td>Read noise (1 MHz)</td><td><span data-c="camera|read_noise_e|1 MHz" data-dp="2"></span>&nbsp;e<sup>&#8722;</sup></td></tr>
+          <tr><td>Dark current @ <span data-c="camera|dark_ref_temp_c" data-dp="0"></span>&nbsp;°C</td><td><span data-c="camera|dark_current_e_per_s_at_-5C" data-dp="4"></span>&nbsp;e<sup>&#8722;</sup>/s/px</td></tr>
+          <tr><td>Dark doubling temperature <span class="tag prov">provisional</span></td><td><span data-c="camera|dark_doubling_kelvin" data-dp="1"></span>&nbsp;K</td></tr>
+          <tr><td>Readout time (8 MHz) <span class="tag prov">provisional</span></td><td><span data-c="camera|readout_time_s|8 MHz" data-dp="1"></span>&nbsp;s</td></tr>
+          <tr><td>Readout time (1 MHz) <span class="tag prov">provisional</span></td><td><span data-c="camera|readout_time_s|1 MHz" data-dp="1"></span>&nbsp;s</td></tr>
+          <tr><td>Full well <span class="tag prov">assumed</span></td><td><span data-c="camera|saturation_adu" data-dp="0"></span>&nbsp;ADU</td></tr>
+          <tr><td>Pixel scale (unbinned)</td><td><span data-c="pixel_scale_arcsec_unbinned" data-dp="4"></span>&nbsp;″/px</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Filters (broadband)</h3>
+      <table class="kv const-kv">
+        <thead><tr><td>Filter</td><td>ZP (1&nbsp;e<sup>&#8722;</sup>/s)</td>
+                   <td>k <span class="tag prov">provisional</span></td>
+                   <td>Sky rate (bin&nbsp;2)</td></tr></thead>
+        <tbody id="filters-table"></tbody>
+      </table>
+
+      <p class="m-note">All numbers above flow from
+        <a href="../reduction/run_all.py"><code>reduction/run_all.py</code></a>,
+        which the README documents in detail. The <em>provisional</em> tags are
+        the values flagged in
+        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>
+        as still needing dedicated calibration data.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Vienna 0.8 m ETC &middot; methods page &middot;
+      <a href="index.html">back to calculator</a>.</p>
+  </footer>
+
+  <script src="methods.js"></script>
+</body>
+</html>

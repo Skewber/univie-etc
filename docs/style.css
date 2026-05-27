@@ -29,6 +29,100 @@ header {
 header h1 { margin: 0; font-size: 1.5rem; letter-spacing: .3px; }
 header .sub { margin: .3rem 0 0; color: var(--muted); font-size: .9rem; }
 
+.nav-row {
+  display: flex; align-items: center; gap: .8rem;
+  margin: 0 0 .6rem; font-size: .85rem;
+}
+.nav-row .nav-spacer { flex: 1; }
+.nav-row a {
+  color: var(--accent-2); text-decoration: none;
+  padding: .2rem .55rem; border: 1px solid var(--border);
+  border-radius: 6px; background: rgba(34, 211, 238, .06);
+}
+.nav-row a:hover { background: rgba(34, 211, 238, .15); }
+
+/* ---------------- Methods page ---------------- */
+.methods-body main.methods {
+  display: block;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 1.4rem 2rem 2rem;
+}
+.methods .m-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.3rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.methods h2 {
+  margin: 0 0 .6rem;
+  font-size: 1.05rem;
+  color: var(--accent-2);
+  letter-spacing: .3px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: .3rem;
+}
+.methods h3 {
+  margin: 1rem 0 .4rem;
+  font-size: .9rem;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.methods p { margin: .55rem 0; font-size: .92rem; }
+.methods ul, .methods ol { margin: .4rem 0 .6rem; padding-left: 1.4rem; font-size: .92rem; }
+.methods li { margin-bottom: .2rem; }
+.methods a { color: var(--accent-2); }
+.methods code { color: var(--accent-2); font-size: .88em; }
+.methods .ref { color: var(--muted); font-size: .8rem; }
+.methods .m-note {
+  color: var(--muted);
+  font-size: .85rem;
+  border-left: 2px solid var(--border);
+  padding: .1rem 0 .1rem .7rem;
+  margin: .6rem 0;
+}
+.methods .worked {
+  margin: .8rem 0 .2rem;
+  padding: .7rem .9rem .8rem;
+  border: 1px solid rgba(34, 211, 238, .35);
+  border-radius: 8px;
+  background: rgba(34, 211, 238, .06);
+  font-size: .9rem;
+}
+.methods .worked p { margin: .35rem 0; }
+.methods .worked b { color: var(--accent-2); }
+
+.methods .katex-display {
+  margin: .7rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.methods .katex { font-size: 1.02em; }
+
+.methods .const-kv td { padding: .3rem .4rem; }
+.methods .const-kv thead td {
+  color: var(--muted);
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--border);
+}
+.methods .tag {
+  display: inline-block;
+  padding: 0 .4rem;
+  margin-left: .3rem;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, .12);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, .4);
+}
+.methods .tag.prov { /* provisional */ }
+
 main {
   display: flex;
   flex-direction: column;
