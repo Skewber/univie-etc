@@ -1,9 +1,14 @@
-# Exposure Time Calculator — Vienna 0.8 m Telescope
+# Exposure Time Calculator — Vienna 0.8 m & LFOA 1.5 m
 
-An exposure time calculator (ETC) for the University of Vienna 0.8 m telescope
-(f/8.3, 6640 mm focal length, FLI CCD, B/V/R/I filters). The instrumental
-constants are **derived from real data** taken on 2026-02-18 (three open clusters
-at different airmasses plus bias/dark/flat calibration frames), not guessed.
+A multi-instrument exposure time calculator (ETC). The primary instrument is the
+University of Vienna 0.8 m telescope (f/8.3, 6640 mm focal length, FLI CCD,
+B/V/R/I filters), whose instrumental constants are **derived from real data**
+taken on 2026-02-18 (three open clusters at different airmasses plus
+bias/dark/flat calibration frames), not guessed. A second telescope, the **LFOA
+1.5 m** (1.5 m / 12.5 m, carrying the **PICO** instrument — an Andor Zyla 4.2-P
+sCMOS, Bessel V/R), is selectable from a dropdown; its constants are
+**provisional estimates** from the spec sheet (no calibration data yet) and are
+flagged with an on-page banner.
 
 The calculator is a static web app in [`docs/`](docs/) that can be hosted for free
 on GitHub Pages.
@@ -15,16 +20,29 @@ docs/            static web ETC (deploy this to GitHub Pages)
   index.html
   app.js         ETC math + Chart.js plots
   style.css
-  constants.json derived instrumental constants (produced by the pipeline)
+  instruments.json        manifest: {default, instruments:[{id,label,type,file}]}
+  instruments/
+    vienna_0.8m.json      0.8 m constants (produced by the reduction pipeline)
+    pico_1.5m.json        PICO constants (hand-authored, provisional)
   chart.min.js   vendored Chart.js (offline)
-reduction/       Python pipeline that derives constants.json from data/
-etc.ipynb        the original reference notebook (now reads constants.json)
+reduction/       Python pipeline that derives the 0.8 m constants from data/
+etc.ipynb        the original reference notebook (reads reduction/constants.json)
 data/            raw FITS frames (not committed — large)
 ```
 
+### Adding an instrument
+
+Each instrument is one JSON file with the same shape as `constants.json`
+(`telescope`, `pixel_scale_arcsec_unbinned`, `reference_binning`, `camera`,
+`filters`, `meta`). To add one, drop the file in `docs/instruments/` and add a
+`{id, label, type, file}` line to `docs/instruments.json`. To swap a camera,
+edit that one file. Set `meta.status_banner` to show a "provisional" notice. The
+`type` field (`imager`) is the extension point for a future spectrograph mode.
+
 ## How the constants are derived
 
-`reduction/run_all.py` produces `reduction/constants.json`:
+`reduction/run_all.py` produces `reduction/constants.json` (and writes the same
+file to `docs/instruments/vienna_0.8m.json` for the web app):
 
 | Quantity | Method |
 |---|---|
@@ -50,8 +68,7 @@ set ASTROMETRY_API_KEY=your_key_here            # Windows
 # export ASTROMETRY_API_KEY=your_key_here       # *nix
 
 cd reduction
-python run_all.py
-cp constants.json ../docs/constants.json
+python run_all.py   # writes reduction/constants.json AND docs/instruments/vienna_0.8m.json
 ```
 
 The detector and sky steps need no internet; only the photometry step contacts
@@ -115,17 +132,21 @@ reports the result, peak pixel / saturation, and diagnostic plots.
 
 ### Sub-exposures, cooling, and the noise breakdown
 
-- **Exposure structure**: choose how the integration is built —
-  - *Single exposure*.
-  - *N subs of fixed length*: give a sub length and N (total = N × length).
-  - *Split total into N subs*: give a total and N (sub length = total ÷ N).
+- **Observing mode**: pick how the exposure is specified —
+  - *Single exposure*: enter a time → get the SNR.
+  - *Target SNR*: enter a desired SNR → get the single exposure time.
+  - *Observing strategy*: the three fields {exposure time, number of subs N,
+    target SNR} are all shown; **leave exactly one blank** and it is solved from
+    the other two. A toggle sets whether the time field means a per-sub length or
+    the total integration (then `total = N × sub`). An **Auto sub-count** option
+    (total-time basis) instead sizes N so each sub stays below the saturation
+    limit, leaving the SNR as the solved field.
 
-  The complementary quantity (total or sub length) is shown inline under the field.
-  Read noise is paid once per sub (`N·N_read²`) and **saturation is checked per
-  sub** — the relevant limit for stacking. When solving for *exposure time* from a
-  target SNR, the total is solved and the structure determines the rest: with a
-  fixed sub length the number of subs is derived (rounded up to whole subs); with a
-  fixed N the sub length is derived.
+  In strategy mode the resulting structure is shown inline under the fields.
+  Leaving two fields blank (under-determined) or filling all three
+  (over-determined) shows a warning instead of a result. Read noise is paid once
+  per sub (`N·N_read²`) and **saturation is checked per sub** — the relevant limit
+  for stacking.
 - **Cooler temperature**: scales the dark current with
   `D(T) = D_ref · 2^((T − T_ref)/ΔT_double)`, with `D_ref` the measured dark at the
   −5 °C setpoint and `ΔT_double` a **provisional 6.3 K** doubling
