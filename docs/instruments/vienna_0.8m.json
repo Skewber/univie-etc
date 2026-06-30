@@ -5,6 +5,17 @@
     "f_number": 8.3,
     "pixel_size_um_unbinned": 9.0
   },
+  "site": {
+    "name": "Universitätssternwarte Wien",
+    "latitude_deg": 48.2316,
+    "longitude_deg": 16.3331,
+    "elevation_m": 241,
+    "tz_standard_offset_hours": 1,
+    "tz_name_standard": "CET",
+    "tz_name_dst": "CEST",
+    "uses_eu_dst": true,
+    "comment": "Approximate observatory coordinates (University of Vienna); refine if needed."
+  },
   "pixel_scale_arcsec_unbinned": 0.279576,
   "reference_binning": 2,
   "camera": {

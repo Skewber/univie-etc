@@ -5,6 +5,17 @@
     "f_number": 8.33,
     "pixel_size_um_unbinned": 6.5
   },
+  "site": {
+    "name": "Leopold-Figl-Observatorium (Mitterschöpfl)",
+    "latitude_deg": 48.0817,
+    "longitude_deg": 15.9242,
+    "elevation_m": 880,
+    "tz_standard_offset_hours": 1,
+    "tz_name_standard": "CET",
+    "tz_name_dst": "CEST",
+    "uses_eu_dst": true,
+    "comment": "Approximate observatory coordinates (LFOA, Mt. Mitterschöpfl); refine if needed."
+  },
   "pixel_scale_arcsec_unbinned": 0.105,
   "reference_binning": 1,
   "camera": {
