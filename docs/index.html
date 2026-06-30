@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Vienna 0.8 m — Exposure Time Calculator</title>
+  <title>Exposure Time Calculator</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,11 +13,19 @@
       <a href="methods.html">Methods &amp; formalism &rarr;</a>
     </nav>
     <h1>Exposure Time Calculator</h1>
-    <p class="sub">Vienna 0.8 m telescope &middot; f/8.3 &middot; FLI CCD &middot;
-      constants derived from the 2026-02-18 run</p>
+    <p class="sub" id="instrument-sub">&nbsp;</p>
   </header>
 
+  <div id="instrument-banner" class="warning hidden"></div>
+
   <main>
+    <!-- ---------------- INSTRUMENT ---------------- -->
+    <div class="panel instrument-bar">
+      <label>Telescope / instrument
+        <select id="instrument"></select>
+      </label>
+    </div>
+
     <!-- ---------------- INPUTS ---------------- -->
     <section class="panel inputs">
       <h2>Inputs</h2>
@@ -89,33 +97,34 @@
       </div>
 
       <div class="group">
-        <span class="group-title">Solve for</span>
-        <div class="radio-row">
-          <label class="radio"><input type="radio" name="mode" value="time" checked />
-            Exposure time (from SNR)</label>
-          <label class="radio"><input type="radio" name="mode" value="snr" />
-            SNR (from exposure time)</label>
-        </div>
-        <label id="snr-input">Target SNR
-          <input id="snr" type="number" value="100" step="1" />
-        </label>
-
-        <label>Exposure structure
-          <select id="expmode">
-            <option value="single">Single exposure</option>
-            <option value="nsub_len">Fixed sub-exposure length</option>
-            <option value="split">Fixed number of subs</option>
-            <option value="total">Fixed total time (auto-size subs)</option>
+        <span class="group-title">Exposure &amp; SNR</span>
+        <label>Mode
+          <select id="solvemode">
+            <option value="single">Single exposure &rarr; SNR</option>
+            <option value="snr">Target SNR &rarr; exposure time</option>
+            <option value="strategy">Observing strategy (solve any field)</option>
           </select>
         </label>
-        <label id="f-total">Total exposure time [s]
-          <input id="exptime" type="number" value="60" step="1" />
-        </label>
-        <label id="f-sublen">Sub-exposure length [s]
-          <input id="subexp" type="number" value="60" step="10" min="1" />
+
+        <div id="timebasis-row" class="radio-row hidden">
+          <small>Exposure time is&hellip;</small>
+          <label class="radio"><input type="radio" name="timebasis" value="persub" checked />
+            per sub-exposure</label>
+          <label class="radio"><input type="radio" name="timebasis" value="total" />
+            total integration</label>
+        </div>
+
+        <label id="f-exptime">Exposure time [s]
+          <input id="exptime" type="number" value="60" step="1" placeholder="leave blank to solve" />
         </label>
         <label id="f-nsub">Number of subs
-          <input id="nsub" type="number" value="5" step="1" min="1" />
+          <input id="nsub" type="number" value="5" step="1" min="1" placeholder="leave blank to solve" />
+        </label>
+        <label class="radio hidden" id="nauto-row">
+          <input id="nauto" type="checkbox" /> Auto sub-count (size by saturation)
+        </label>
+        <label id="f-snr">Target SNR
+          <input id="snr" type="number" value="100" step="1" placeholder="leave blank to solve" />
         </label>
         <label id="f-satlimit" class="hidden">Max saturation per sub [%]
           <input id="satlimit" type="number" value="70" step="5" min="10" max="100" />
@@ -123,6 +132,7 @@
             of the full well</small>
         </label>
         <div id="exp-derived" class="derived hidden"></div>
+        <div id="exp-warning" class="input-warning hidden"></div>
         <small id="exp-note">Read noise is paid once per sub; saturation is checked per sub.</small>
       </div>
 
@@ -162,10 +172,7 @@
           </select>
         </label>
         <label>Readout mode
-          <select id="readmode">
-            <option value="8 MHz" selected>8 MHz (fast)</option>
-            <option value="1 MHz">1 MHz (slow)</option>
-          </select>
+          <select id="readmode"></select>
         </label>
         <label>Cooler temperature [&deg;C]
           <input id="cooltemp" type="number" value="-5" step="1" />
@@ -200,19 +207,56 @@
     <section class="panel plots">
       <h2>Diagnostics</h2>
       <div class="chart-grid">
-        <div class="chart-box"><canvas id="chart-time"></canvas></div>
-        <div class="chart-box"><canvas id="chart-mag"></canvas></div>
-        <div class="chart-box"><canvas id="chart-airmass"></canvas></div>
-        <div class="chart-box"><canvas id="chart-sat"></canvas></div>
-        <div class="chart-box"><canvas id="chart-noise"></canvas></div>
+        <div class="chart-box" data-chart="chart-time">
+          <div class="chart-head">
+            <span class="chart-title">SNR vs exposure time</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-time"></canvas></div>
+        </div>
+        <div class="chart-box" data-chart="chart-mlim">
+          <div class="chart-head">
+            <span class="chart-title">Limiting mag (S/N=5) vs exposure time</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-mlim"></canvas></div>
+        </div>
+        <div class="chart-box" data-chart="chart-mag">
+          <div class="chart-head">
+            <span class="chart-title">SNR vs brightness</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-mag"></canvas></div>
+        </div>
+        <div class="chart-box" data-chart="chart-airmass">
+          <div class="chart-head">
+            <span class="chart-title">SNR vs airmass</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-airmass"></canvas></div>
+        </div>
+        <div class="chart-box" data-chart="chart-sat">
+          <div class="chart-head">
+            <span class="chart-title">Peak ADU vs exposure (saturation)</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-sat"></canvas></div>
+        </div>
+        <div class="chart-box" data-chart="chart-noise">
+          <div class="chart-head">
+            <span class="chart-title">Noise breakdown (variance %)</span>
+            <button type="button" class="chart-toggle" aria-expanded="true" aria-label="Toggle chart">&minus;</button>
+          </div>
+          <div class="chart-body"><canvas id="chart-noise"></canvas></div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer>
     <p>SNR&nbsp;=&nbsp;N&#42;/&radic;(N&#42; + n<sub>pix</sub>(N<sub>S</sub> + N<sub>D</sub> + N<sub>R</sub>)).
-       Constants from <code>constants.json</code>. Filters B,V,R,I only
-       (narrowband not yet characterised).</p>
+       Per-instrument constants from <code>instruments.json</code>. Only the
+       characterised broadband filters are offered per instrument.</p>
   </footer>
 
   <script src="chart.min.js"></script>

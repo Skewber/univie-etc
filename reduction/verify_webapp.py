@@ -1,8 +1,9 @@
 """Headless-browser smoke test of the ETC web app.
 
 Serves docs/ and drives it with Playwright: checks for JS console errors,
-verifies the result is computed, exercises the mode toggle and filter change,
-and writes screenshots for visual inspection.
+verifies the result is computed, exercises the instrument switch, the three
+observing modes (single / target SNR / strategy) and filter change, and writes
+screenshots for visual inspection.
 """
 import functools
 import http.server
@@ -60,6 +61,31 @@ def main():
         # 1. default point source (regression: expect ~21.8 s)
         snap("point_default")
 
+        # 1b. instrument switch -> LFOA 1.5 m (PICO/Zyla): provisional banner
+        # shows, only the two Bessel filters (V, R) are offered, and the single
+        # Zyla readout mode repopulates the readout-mode select.
+        page.select_option("#instrument", "lfoa_1.5m")
+        page.wait_for_timeout(600)
+        lfoa_filters = page.eval_on_selector_all("#filter option", "els => els.map(e => e.value)")
+        lfoa_modes = page.eval_on_selector_all("#readmode option", "els => els.length")
+        banner_vis = page.locator("#instrument-banner").is_visible()
+        print(f"\n[instrument] LFOA filters={lfoa_filters}  readout_modes={lfoa_modes}  "
+              f"banner={banner_vis}")
+        assert lfoa_filters == ["V", "R"], f"LFOA filters {lfoa_filters} (expected ['V','R'])"
+        assert lfoa_modes == 1, f"LFOA readout modes {lfoa_modes} (expected 1)"
+        assert banner_vis, "LFOA provisional banner should be visible"
+        snap("instrument_lfoa")
+
+        # back to the 0.8 m for the remaining checks: two readout modes, no banner.
+        page.select_option("#instrument", "vienna_0.8m")
+        page.wait_for_timeout(600)
+        modes_08 = page.eval_on_selector_all("#readmode option", "els => els.length")
+        banner_08 = page.locator("#instrument-banner").is_visible()
+        print(f"[instrument] 0.8 m readout_modes={modes_08}  banner={banner_08}")
+        assert modes_08 == 2, f"0.8 m readout modes {modes_08} (expected 2)"
+        assert not banner_08, "0.8 m should show no provisional banner"
+        page.select_option("#filter", "V")
+
         # 2. SED color helper: V=14, M0 star, observed in I
         page.select_option("#filter", "I")
         page.select_option("#sed", "spec")
@@ -98,65 +124,80 @@ def main():
         page.fill("#sersicN", "1")
         page.wait_for_timeout(400); snap("ext_sersic1")
 
-        # 7. bright Sersic in fixed-time mode -> saturation
+        # 7. bright Sersic, single-exposure mode (time given -> SNR) -> saturation
         page.fill("#sersicN", "4")
-        page.check('input[name="mode"][value="snr"]')
-        page.select_option("#expmode", "single")
+        page.select_option("#solvemode", "single")
         page.fill("#exptime", "300"); page.fill("#mag", "8")
         page.wait_for_timeout(400); snap("ext_saturated")
 
         # 8. cooling impact (point source, fixed 60 s, single exposure)
         page.check('input[name="ttype"][value="point"]')
         page.select_option("#sed", "flat"); page.select_option("#filter", "V")
-        page.check('input[name="mode"][value="snr"]')
-        page.select_option("#expmode", "single")
+        page.select_option("#solvemode", "single")
         page.fill("#exptime", "60"); page.fill("#mag", "18")
         page.fill("#cooltemp", "-5"); page.wait_for_timeout(300); snap("cool_minus5")
         page.fill("#cooltemp", "20"); page.wait_for_timeout(300); snap("cool_plus20")
         page.fill("#cooltemp", "-5")
 
-        # 9. SNR mode: "N subs of fixed length" (total derived)
+        # 9. Target SNR mode: single exposure time solved from desired SNR
         page.fill("#mag", "15")
-        page.select_option("#expmode", "nsub_len")
-        page.fill("#subexp", "60"); page.fill("#nsub", "3")
-        page.wait_for_timeout(300); snap("snr_nsublen_3x60")
-
-        # 10. SNR mode: "split total into N" (sub length derived)
-        page.select_option("#expmode", "split")
-        page.fill("#exptime", "300"); page.fill("#nsub", "5")
-        page.wait_for_timeout(300); snap("snr_split_300_5")
-
-        # 11. time mode + fixed sub length -> N derived
-        page.check('input[name="mode"][value="time"]')
+        page.select_option("#solvemode", "snr")
         page.fill("#snr", "100")
-        page.select_option("#expmode", "nsub_len"); page.fill("#subexp", "60")
-        page.wait_for_timeout(300); snap("time_nsublen")
+        page.wait_for_timeout(300); snap("target_snr_single")
 
-        # 12. time mode + fixed N -> sub length derived
-        page.select_option("#expmode", "split"); page.fill("#nsub", "4")
-        page.wait_for_timeout(300); snap("time_split")
+        # 10. Strategy, per-sub basis, blank SNR: N subs of fixed length -> SNR
+        page.select_option("#solvemode", "strategy")
+        page.check('input[name="timebasis"][value="persub"]')
+        page.fill("#exptime", "60"); page.fill("#nsub", "3"); page.fill("#snr", "")
+        page.wait_for_timeout(300); snap("strategy_persub_3x60_snr")
 
-        # 12b. "Fixed total time" -> auto-sized subs (1 h on a bright source)
+        # 11. Strategy, total basis, blank SNR: split a total into N -> SNR
+        page.check('input[name="timebasis"][value="total"]')
+        page.fill("#exptime", "300"); page.fill("#nsub", "5"); page.fill("#snr", "")
+        page.wait_for_timeout(300); snap("strategy_total_300_5_snr")
+
+        # 12. Strategy, per-sub basis, blank N: fixed sub length -> N from SNR
+        page.check('input[name="timebasis"][value="persub"]')
+        page.fill("#exptime", "60"); page.fill("#snr", "100"); page.fill("#nsub", "")
+        page.wait_for_timeout(300); snap("strategy_blank_n")
+
+        # 12. Strategy, total basis, blank time: fixed N + SNR -> total time
+        page.check('input[name="timebasis"][value="total"]')
+        page.fill("#nsub", "4"); page.fill("#snr", "100"); page.fill("#exptime", "")
+        page.wait_for_timeout(300); snap("strategy_blank_time")
+
+        # 12b. Strategy, Auto sub-count (size by saturation), 1 h on a bright source
         page.fill("#mag", "12")  # bright -> saturation matters
-        page.select_option("#expmode", "total")
-        page.fill("#exptime", "3600"); page.fill("#satlimit", "70")
-        page.wait_for_timeout(300); snap("total_1h_mag12")
+        page.check('input[name="timebasis"][value="total"]')
+        page.check("#nauto")
+        page.fill("#exptime", "3600"); page.fill("#snr", ""); page.fill("#satlimit", "70")
+        page.wait_for_timeout(300); snap("strategy_auto_1h_mag12")
+        page.uncheck("#nauto")
 
-        # 12c. "Fixed sub length" with too-long sub: should flag overshoot
+        # 12c. Strategy, per-sub blank N with too-long sub: should flag overshoot
         page.fill("#mag", "14")
-        page.select_option("#expmode", "nsub_len")
-        page.check('input[name="mode"][value="time"]')
-        page.fill("#snr", "100"); page.fill("#subexp", "100")
-        page.wait_for_timeout(300); snap("nsublen_overshoot")
+        page.check('input[name="timebasis"][value="persub"]')
+        page.fill("#exptime", "100"); page.fill("#snr", "100"); page.fill("#nsub", "")
+        page.wait_for_timeout(300); snap("strategy_overshoot")
 
-        # 12d. V=4 at realistic airmass -> should be heavily saturated
-        page.select_option("#expmode", "single")
-        page.check('input[name="mode"][value="snr"]')
+        # 12d. Over/under-determined strategy inputs should warn (and not solve)
+        page.fill("#exptime", "60"); page.fill("#nsub", "5"); page.fill("#snr", "100")
+        page.wait_for_timeout(300)
+        over = page.inner_text("#input-warnings")
+        assert "Overdetermined" in over, f"expected overdetermined warning, got: {over!r}"
+        page.fill("#nsub", ""); page.fill("#snr", "")   # only time given -> 2 blanks
+        page.wait_for_timeout(300)
+        under = page.inner_text("#input-warnings")
+        assert "Underdetermined" in under, f"expected underdetermined warning, got: {under!r}"
+        print("  strategy over/under-determined warnings OK")
+
+        # 12e. V=4 at realistic airmass -> should be heavily saturated
+        page.select_option("#solvemode", "single")
         page.select_option("#binning", "2")
         page.fill("#airmass", "1.2"); page.fill("#mag", "4"); page.fill("#exptime", "1")
         page.wait_for_timeout(300); snap("bright_v4_realistic")
 
-        # 12e. Unphysical airmass + moon illum > 1 should fire input warnings
+        # 12f. Unphysical airmass + moon illum > 1 should fire input warnings
         page.fill("#airmass", "42"); page.fill("#moonillum", "100")
         page.wait_for_timeout(300); snap("bad_inputs_warning")
         nwarn = page.eval_on_selector_all(".input-warning", "els => els.length")
@@ -166,8 +207,7 @@ def main():
 
         # 13. moon: new -> full at 90 deg separation
         page.check('input[name="ttype"][value="point"]')
-        page.check('input[name="mode"][value="snr"]')
-        page.select_option("#expmode", "single")
+        page.select_option("#solvemode", "single")
         page.fill("#mag", "18"); page.fill("#exptime", "60")
         page.fill("#moonillum", "0"); page.fill("#moonsep", "90")
         page.wait_for_timeout(300); snap("moon_new")
@@ -198,6 +238,22 @@ def main():
         assert abs(air_value - 1.155) < 0.01
         page.fill("#airmass", "1.2"); page.wait_for_timeout(100)
 
+        # 13b. plot collapse: height collapses, no resize loop (chart-box stays
+        # under the original chart height; previously a flex+Chart.js feedback
+        # made the box grow without bound).
+        box_sel = "[data-chart='chart-time']"
+        page.click(f"{box_sel} .chart-toggle")
+        page.wait_for_timeout(400)
+        h_collapsed = page.evaluate(
+            f"document.querySelector(\"{box_sel}\").getBoundingClientRect().height")
+        assert h_collapsed < 80, f"collapsed chart-box height = {h_collapsed} (should be header-only)"
+        page.click(f"{box_sel} .chart-toggle")
+        page.wait_for_timeout(400)
+        h_expanded = page.evaluate(
+            f"document.querySelector(\"{box_sel}\").getBoundingClientRect().height")
+        assert 240 < h_expanded < 320, f"expanded chart-box height = {h_expanded} (should be ~260)"
+        print(f"\n[collapse] chart-box: collapsed={h_collapsed:.0f}  expanded={h_expanded:.0f}")
+
         # 14. export button -> save .txt and read it back
         page.fill("#moonillum", "0")
         with page.expect_download() as dl_info:
@@ -212,6 +268,22 @@ def main():
             print("   ", line)
         assert "NOISE BREAKDOWN" in txt and "%" in txt, "export missing noise section"
         os.remove(outpath)
+
+        # 15. methods page: loads, has no JS errors, constants populated, KaTeX rendered
+        page.goto(f"http://127.0.0.1:{PORT}/methods.html")
+        page.wait_for_timeout(2500)  # KaTeX auto-render runs after script load
+        n_const = page.eval_on_selector_all(
+            "span[data-c]", "els => els.filter(e => e.textContent.trim() && e.textContent !== '—').length")
+        n_math = page.eval_on_selector_all(".katex", "els => els.length")
+        n_filters = page.eval_on_selector_all("#filters-table tr", "els => els.length")
+        nav_target = page.eval_on_selector(".nav-row a", "el => el.getAttribute('href')")
+        print(f"\n[methods] constants_filled={n_const}  katex_nodes={n_math}  "
+              f"filter_rows={n_filters}  nav_back={nav_target!r}")
+        assert n_const >= 10, f"only {n_const} live constants populated"
+        assert n_math >= 20, f"only {n_math} KaTeX nodes -- math may not have rendered"
+        assert n_filters >= 4, f"only {n_filters} filter rows (expected >=4 broadband)"
+        page.screenshot(path=os.path.join(ROOT, "reduction", "web_methods.png"),
+                        full_page=True)
 
         b.close()
 

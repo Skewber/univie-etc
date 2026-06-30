@@ -1,7 +1,22 @@
 "use strict";
 
-// Loaded from constants.json (derived from the 2026-02-18 observing run).
+// C holds the ACTIVE instrument's constants (same shape as a single
+// constants.json). MANIFEST is the instruments.json registry and ACTIVE is the
+// selected manifest entry {id, label, type, file}. Switching instruments swaps
+// C; all the physics below is instrument-agnostic and reads only from C.
 let C = null;
+let MANIFEST = null;
+let ACTIVE = null;
+
+// S/N threshold used for the reported limiting magnitude.
+const SIGMA_LIM = 5;
+
+// Binned pixel scale [arcsec/pix] for the active instrument.
+const binnedScale = (binning) => C.pixel_scale_arcsec_unbinned * binning;
+
+// Airmass X <-> altitude a [deg]:  X = sec(90 deg - a).
+const airmassToAltitude = (X) => 90 - Math.acos(Math.min(1, 1 / X)) * 180 / Math.PI;
+const altitudeToAirmass = (a) => 1 / Math.cos((90 - a) * Math.PI / 180);
 
 // ---------------------------------------------------------------------------
 // Core SNR math. Works on a generic triple: signal rate in the aperture
@@ -40,8 +55,9 @@ function peakElectrons(peakRate, t, Rsky, Rdark) {
 // Per-binned-pixel background rates (scaled from the bin-2 measurement).
 // moonMult: a multiplicative factor from the moon-brightness model (>=1).
 function skyRate(filter, binning, skyMult, moonMult) {
+  const refBin = C.reference_binning || 2;
   return C.filters[filter].sky_rate_e_per_s_per_pix *
-    Math.pow(binning / 2, 2) * skyMult * moonMult;
+    Math.pow(binning / refBin, 2) * skyMult * moonMult;
 }
 
 // Krisciunas & Schaefer (1991) moon-brightness model, simplified to a
@@ -69,8 +85,9 @@ function moonFactor(illum, sepDeg, X) {
   // Dark-sky observed V surface brightness, from our measured per-pixel rate.
   // The measured sky rate is already the rate *at* the observation airmass --
   // it is not an above-atmosphere quantity -- so no extinction term here.
-  const sBin2 = C.pixel_scale_arcsec_unbinned * 2; // reference binning 2
-  const dark_per_arcsec2 = C.filters.V.sky_rate_e_per_s_per_pix / (sBin2 * sBin2);
+  const refBin = C.reference_binning || 2;
+  const sBinRef = binnedScale(refBin); // sky rate's reference binning
+  const dark_per_arcsec2 = C.filters.V.sky_rate_e_per_s_per_pix / (sBinRef * sBinRef);
   const mu_dark = C.filters.V.zeropoint_mag_1es - 2.5 * Math.log10(dark_per_arcsec2);
   return 1 + Math.pow(10, -0.4 * (mu_moon - mu_dark));
 }
@@ -80,7 +97,8 @@ function darkRate(binning, tempC) {
   const dbl = cam.dark_doubling_kelvin || 6.3;
   const Dref = cam["dark_current_e_per_s_at_-5C"];
   const D = Dref * Math.pow(2, (tempC - ref) / dbl);
-  return D * Math.pow(binning / 2, 2);
+  const refBin = C.reference_binning || 2;
+  return D * Math.pow(binning / refBin, 2);
 }
 
 // Flux (e-/s) for a magnitude (or surface-brightness, per arcsec^2) in a band.
@@ -96,7 +114,7 @@ function magFor(flux, filter, airmass) {
 
 // Number of pixels in a seeing-matched point-source aperture.
 function nPixPoint(fwhm, binning, apDiam) {
-  const sBinned = C.pixel_scale_arcsec_unbinned * binning;
+  const sBinned = binnedScale(binning);
   const r = (apDiam / 2) * fwhm / sBinned;
   return Math.PI * r * r;
 }
@@ -124,7 +142,7 @@ function populateSpectype(kind) {
 // ---------------------------------------------------------------------------
 function buildPoint(inp, b) {
   const Rstar = fluxFor(b, inp.filter, inp.airmass);
-  const sBinned = C.pixel_scale_arcsec_unbinned * inp.binning;
+  const sBinned = binnedScale(inp.binning);
   const sigmaPx = (inp.seeing / sBinned) / 2.3548;
   return {
     signalRate: Rstar, nPix: nPixPoint(inp.seeing, inp.binning, inp.aperture),
@@ -135,7 +153,7 @@ function buildPoint(inp, b) {
 // Radial analytic extended source. Peak SB is seeing-limited (mean SB within a
 // disc of diameter = seeing FWHM, centred on the source).
 function buildExtended(inp, b) {
-  const sBinned = C.pixel_scale_arcsec_unbinned * inp.binning;
+  const sBinned = binnedScale(inp.binning);
   const rAp = (inp.extap > 0 ? inp.extap : sBinned) / 2;
   const enc = SRC.encFracBuilder(inp.profile, inp.size, inp.sersicN);
   const rSee = Math.max(inp.seeing / 2, sBinned / 2);
@@ -163,49 +181,92 @@ function buildExtended(inp, b) {
   return { signalRate, nPix, peakRate, totalFlux };
 }
 
-// Resolve the exposure structure into total time T, sub count N, and per-sub
-// (frame) time, honouring the solve mode (time vs snr) and exposure structure.
-// `src` is the {signalRate, nPix, peakRate} triple from buildPoint/buildExtended.
+// Resolve the chosen observing mode into total time T, sub count N, and the
+// SNR, plus `solvedFor` (which quantity was the output) and an optional `err`
+// message when the inputs are over/under-determined or the target is
+// unreachable. `src` is the {signalRate, nPix, peakRate} triple.
+//
+// Three modes:
+//   single   — time given, N=1            -> SNR
+//   snr      — SNR given, N=1             -> exposure time
+//   strategy — {time, N, SNR}, leave one blank; the blank one is solved. The
+//              `timebasis` toggle makes the time field a per-sub length or the
+//              total integration. `nauto` sizes N from the saturation limit.
 function resolveExposure(inp, src, Rsky, Rdark, Nread, gain) {
   const S = src.signalRate, nPix = src.nPix;
-  const em = inp.expmode;
-  const N0 = Math.max(1, Math.round(inp.nsub || 1));
-  const L0 = inp.subexp > 0 ? inp.subexp : 1;
+  const snrAt = (T, N) => snrForTime(S, T, nPix, Rsky, Rdark, Nread, N);
+  const blocked = (err) => ({ t: NaN, nSub: 1, snr: NaN, solvedFor: null, err });
 
-  // "Fixed total time": total is given, N is the smallest integer such that
-  // each sub stays below the saturation safety threshold. Solve mode is ignored
-  // here because the total is already specified.
-  if (em === "total") {
+  if (inp.solvemode === "single") {
+    const T = Math.max(0.01, inp.exptime || 0);
+    return { t: T, nSub: 1, snr: snrAt(T, 1), solvedFor: "snr" };
+  }
+  if (inp.solvemode === "snr") {
+    const target = inp.snr;
+    if (target == null || !(target > 0)) return blocked("Enter a positive target SNR.");
+    const T = timeForSnrFixedReads(S, target, nPix, Rsky, Rdark, Nread, 1);
+    return { t: T, nSub: 1, snr: snrAt(T, 1), solvedFor: "exptime" };
+  }
+
+  // ---- strategy ----
+  const total = inp.timebasis === "total";
+  const haveTime = inp.exptime != null && isFinite(inp.exptime);
+  const haveSnr = inp.snr != null && isFinite(inp.snr);
+
+  // Auto sub-count: N comes from the saturation limit (needs a total time), so
+  // the SNR must be the blank/solved field. This reproduces the old
+  // "fixed total time, auto-size subs" workflow.
+  if (inp.nauto) {
+    if (!haveTime) return blocked("Auto sub-count needs a total exposure time.");
+    if (haveSnr)   return blocked("Overdetermined: with Auto sub-count, leave the Target SNR blank.");
     const T = Math.max(0.01, inp.exptime);
     const satFrac = Math.min(1, Math.max(0.05, (inp.satlimit || 70) / 100));
     const satE = C.camera.saturation_adu * gain * satFrac;
     const peakPerSec = src.peakRate + Rsky + Rdark;
     const tSubMax = peakPerSec > 0 ? satE / peakPerSec : T;
     const N = Math.max(1, Math.ceil(T / tSubMax));
-    return { t: T, nSub: N,
-             snr: snrForTime(S, T, nPix, Rsky, Rdark, Nread, N),
-             tSubMax };
+    return { t: T, nSub: N, snr: snrAt(T, N), solvedFor: "snr" };
   }
 
-  if (inp.mode === "snr") {                    // exposure given -> compute SNR
-    let T, N;
-    if (em === "nsub_len") { N = N0; T = N * L0; }
-    else if (em === "split") { N = N0; T = inp.exptime; }
-    else { N = 1; T = inp.exptime; }
-    return { t: T, nSub: N, snr: snrForTime(S, T, nPix, Rsky, Rdark, Nread, N) };
-  }
+  const haveN = inp.nsub != null && isFinite(inp.nsub);
+  const blanks = [!haveTime, !haveN, !haveSnr].filter(Boolean).length;
+  if (blanks === 0) return blocked("Overdetermined: clear one of time / N / SNR so it can be solved.");
+  if (blanks > 1)   return blocked("Underdetermined: leave exactly one of time / N / SNR blank.");
 
-  // time mode: solve total T for the target SNR
-  let T, N;
-  if (em === "nsub_len") {                     // fixed sub length, N derived
-    T = timeForSnrFixedSubLen(S, inp.snr, nPix, Rsky, Rdark, Nread, L0);
-    N = Math.max(1, Math.ceil(T / L0)); T = N * L0;
-  } else if (em === "split") {                 // fixed N, sub length derived
-    N = N0; T = timeForSnrFixedReads(S, inp.snr, nPix, Rsky, Rdark, Nread, N);
-  } else {                                     // single exposure
-    N = 1; T = timeForSnrFixedReads(S, inp.snr, nPix, Rsky, Rdark, Nread, 1);
+  // blank SNR — forward compute from (time, N)
+  if (!haveSnr) {
+    const N = Math.max(1, Math.round(inp.nsub));
+    const T = total ? Math.max(0.01, inp.exptime) : N * Math.max(0.01, inp.exptime);
+    return { t: T, nSub: N, snr: snrAt(T, N), solvedFor: "snr" };
   }
-  return { t: T, nSub: N, snr: snrForTime(S, T, nPix, Rsky, Rdark, Nread, N) };
+  // blank exposure time — solve total T for the target SNR with N reads fixed
+  if (!haveTime) {
+    const N = Math.max(1, Math.round(inp.nsub));
+    const T = timeForSnrFixedReads(S, inp.snr, nPix, Rsky, Rdark, Nread, N);
+    return { t: T, nSub: N, snr: snrAt(T, N), solvedFor: "exptime" };
+  }
+  // blank N — solve the sub count for the target SNR
+  if (!total) {                                // per-sub length L fixed
+    const L = Math.max(0.01, inp.exptime);
+    let T = timeForSnrFixedSubLen(S, inp.snr, nPix, Rsky, Rdark, Nread, L);
+    const N = Math.max(1, Math.ceil(T / L)); T = N * L;
+    const res = { t: T, nSub: N, snr: snrAt(T, N), solvedFor: "nsub" };
+    if (N === 1 && res.snr > 1.3 * inp.snr) {
+      res.err = `A single ${L.toFixed(0)} s sub already overshoots S/N ${inp.snr} ` +
+        `(reaches ${res.snr.toFixed(0)}). Shorten the sub length to step finer.`;
+    }
+    return res;
+  }
+  // total time fixed: most subs the total can be split into and still hit target
+  const T = Math.max(0.01, inp.exptime);
+  if (snrAt(T, 1) < inp.snr) {
+    return { t: T, nSub: 1, snr: snrAt(T, 1), solvedFor: "nsub",
+      err: `This total only reaches S/N ${snrAt(T, 1).toFixed(1)} even as a single ` +
+        `exposure (target ${inp.snr}). Increase the total time or lower the target.` };
+  }
+  let N = 1;
+  while (N < 100000 && snrAt(T, N + 1) >= inp.snr) N++;   // snrForTime ↓ as N ↑
+  return { t: T, nSub: N, snr: snrAt(T, N), solvedFor: "nsub" };
 }
 
 function compute(inp) {
@@ -220,7 +281,7 @@ function compute(inp) {
   const ex = resolveExposure(inp, src, Rsky, Rdark, Nread, gain);
   const t = ex.t, snr = ex.snr, nSub = ex.nSub;
   const tFrame = nSub > 1 ? t / nSub : t;      // per-frame time (saturation)
-  const sBinned = C.pixel_scale_arcsec_unbinned * inp.binning;
+  const sBinned = binnedScale(inp.binning);
   const peakE = peakElectrons(src.peakRate, tFrame, Rsky, Rdark);
 
   // Wall-clock total = N × (sub length + per-frame readout/download).
@@ -228,10 +289,12 @@ function compute(inp) {
                 || 1.0;
   const wallTime = nSub * (tFrame + tRead);
 
-  // Input-sanity warnings (shown to the user; don't change the math).
+  // Input-sanity warnings (shown in the results area; don't change the math).
+  // The exposure-solve message (ex.err) is shown inside the Exposure & SNR box
+  // instead — see renderExpDerived — so it's visible without scrolling.
   const warnings = [];
   if (inp.airmass > 5) {
-    const alt = 90 - Math.acos(Math.min(1, 1 / inp.airmass)) * 180 / Math.PI;
+    const alt = airmassToAltitude(inp.airmass);
     warnings.push(
       `High airmass: X=${inp.airmass.toFixed(2)} corresponds to altitude ≈ ` +
       `${alt.toFixed(1)}°. Extinction at this X dims the source by ` +
@@ -248,7 +311,6 @@ function compute(inp) {
   // (aperture, t, sub count, conditions). Defined for point sources;
   // for an extended source the analogue would be a limiting surface brightness,
   // which depends on the profile choice, so we report it only for points.
-  const SIGMA_LIM = 5;
   const Bvar = src.nPix * (t * (Rsky + Rdark) + nSub * Nread * Nread);
   const sLim = SIGMA_LIM * SIGMA_LIM / (2 * t) *
                (1 + Math.sqrt(1 + 4 * Bvar / (SIGMA_LIM * SIGMA_LIM)));
@@ -260,7 +322,7 @@ function compute(inp) {
 
   return {
     ...src, b, Rsky, Rdark, Nread, gain, t, snr, nSub, tFrame, sBinned, peakE,
-    moonMult, tRead, wallTime, mLim, warnings,
+    moonMult, tRead, wallTime, mLim, warnings, solvedFor: ex.solvedFor, err: ex.err,
     peakADU: peakE / gain,
     satPct: peakE / gain / C.camera.saturation_adu * 100,
     fwhmSampling: inp.seeing / sBinned,
@@ -279,6 +341,12 @@ function compute(inp) {
 // ---------------------------------------------------------------------------
 const val = (id) => document.getElementById(id).value;
 const num = (id) => parseFloat(document.getElementById(id).value);
+// blank-aware numeric read: an empty field is null (not NaN/0), so the solver
+// can tell "left blank to solve" from "given the value 0".
+const numN = (id) => {
+  const v = document.getElementById(id).value.trim();
+  return v === "" ? null : parseFloat(v);
+};
 
 function readInputs() {
   const sedMode = val("sed");
@@ -286,12 +354,12 @@ function readInputs() {
     filter: val("filter"),
     ttype: document.querySelector('input[name="ttype"]:checked').value,
     mag: num("mag"),
-    mode: document.querySelector('input[name="mode"]:checked').value,
-    snr: num("snr"),
-    expmode: val("expmode"),
-    exptime: num("exptime"),
-    subexp: num("subexp"),
-    nsub: num("nsub"),
+    solvemode: val("solvemode"),
+    timebasis: document.querySelector('input[name="timebasis"]:checked').value,
+    nauto: document.getElementById("nauto").checked,
+    snr: numN("snr"),
+    exptime: numN("exptime"),
+    nsub: numN("nsub"),
     satlimit: num("satlimit"),
     cooltemp: num("cooltemp"),
     airmass: num("airmass"),
@@ -320,18 +388,29 @@ function fmtTime(t) {
   if (t < 1) return t.toFixed(3) + " s";
   if (t < 120) return t.toFixed(1) + " s";
   if (t < 3600) return (t / 60).toFixed(1) + " min";
-  return (t / 3600).toFixed(2) + " h";
+  const h = Math.floor(t / 3600);
+  const m = Math.round((t - h * 3600) / 60);
+  // carry a rounded-up 60 min back into the hours
+  const hh = h + (m === 60 ? 1 : 0);
+  const mm = m === 60 ? 0 : m;
+  return `${hh}:${String(mm).padStart(2, "0")} h`;
 }
 
 function renderResults(inp, r) {
   const label = document.getElementById("headline-label");
   const value = document.getElementById("headline-value");
-  if (inp.mode === "time") {
+  if (r.solvedFor === "exptime") {
     label.textContent = `Exposure time for SNR ${inp.snr}`;
     value.textContent = fmtTime(r.t);
-  } else {
+  } else if (r.solvedFor === "nsub") {
+    label.textContent = `Subs of ${fmtTime(r.tFrame)} for SNR ${inp.snr}`;
+    value.textContent = isFinite(r.nSub) ? `${r.nSub}` : "—";
+  } else if (r.solvedFor === "snr") {
     label.textContent = `SNR in ${fmtTime(r.t)}`;
     value.textContent = isFinite(r.snr) ? r.snr.toFixed(1) : "—";
+  } else {                                     // unsolvable / ill-posed inputs
+    label.textContent = "Cannot solve — check inputs";
+    value.textContent = "—";
   }
 
   const rows = [["Filter", inp.filter]];
@@ -398,31 +477,34 @@ function renderResults(inp, r) {
 }
 
 // Inline readout of the complementary exposure quantity, next to the fields.
+// Only shown in "strategy" mode (single / snr modes have nothing complementary).
 function renderExpDerived(inp, r) {
   const el = document.getElementById("exp-derived");
-  if (inp.expmode === "single") {
+
+  // Solve/determinacy message lives next to the fields so it's seen without
+  // scrolling to the results (over/under-determined, unreachable target, …).
+  const warn = document.getElementById("exp-warning");
+  if (r.err) { warn.classList.remove("hidden"); warn.textContent = "⚠ " + r.err; }
+  else { warn.classList.add("hidden"); warn.textContent = ""; }
+
+  if (inp.solvemode !== "strategy" || !isFinite(r.t)) {
     el.classList.add("hidden"); el.innerHTML = ""; return;
   }
   el.classList.remove("hidden");
   const L = r.tFrame, N = r.nSub, T = r.t;
-  if (inp.expmode === "total") {
-    el.innerHTML = `total <b>${fmtTime(T)}</b> &nbsp;→&nbsp; ` +
-      `<b>${N}</b> sub${N > 1 ? "s" : ""} of <b>${L.toFixed(1)} s</b> ` +
-      `<small>(each sub ≤ ${inp.satlimit | 0}% of full well; achieved S/N ` +
-      `${r.snr.toFixed(1)})</small>`;
-  } else if (inp.expmode === "nsub_len") {
-    let html = `${N} × ${L.toFixed(1)} s &nbsp;→&nbsp; total <b>${fmtTime(T)}</b>` +
-      (inp.mode === "time" ? " &nbsp;(N from target SNR)" : "");
-    if (inp.mode === "time" && N === 1 && r.snr > 1.3 * inp.snr) {
-      html += `<br><small>⚠ a single ${L.toFixed(0)} s sub already overshoots S/N ` +
-        `${inp.snr} (achieved ${r.snr.toFixed(0)}). Reduce the sub length to ` +
-        `step finer, or switch to "Fixed total time" to size subs by saturation.</small>`;
-    }
-    el.innerHTML = html;
-  } else { // split
-    el.innerHTML = `total <b>${fmtTime(T)}</b> ÷ ${N} &nbsp;→&nbsp; ` +
-      `sub <b>${L.toFixed(1)} s</b>` + (inp.mode === "time" ? " &nbsp;(total from target SNR)" : "");
+  const structure = `<b>${N}</b> × <b>${L.toFixed(1)} s</b> &nbsp;→&nbsp; total <b>${fmtTime(T)}</b>`;
+  let note;
+  if (inp.nauto) {
+    note = `<small>(N auto-sized so each sub ≤ ${inp.satlimit | 0}% of full well; ` +
+      `achieved S/N ${r.snr.toFixed(1)})</small>`;
+  } else if (r.solvedFor === "snr") {
+    note = `<small>(achieved S/N ${r.snr.toFixed(1)})</small>`;
+  } else if (r.solvedFor === "nsub") {
+    note = `<small>(N from target S/N ${inp.snr})</small>`;
+  } else {                                     // solvedFor === "exptime"
+    note = `<small>(${inp.timebasis === "total" ? "total" : "sub length"} from target S/N ${inp.snr})</small>`;
   }
+  el.innerHTML = `${structure} ${note}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -434,9 +516,11 @@ function exportResults() {
   const total = r.noise.star + r.noise.sky + r.noise.dark + r.noise.read;
   const pct = (v) => (100 * v / Math.max(total, 1e-30)).toFixed(1).padStart(5) + " %";
   const L = [];
-  L.push("Vienna 0.8m Exposure Time Calculator");
+  L.push((ACTIVE ? ACTIVE.label : "") + " Exposure Time Calculator");
   L.push("Generated: " + new Date().toISOString());
+  L.push("Instrument: " + (ACTIVE ? `${ACTIVE.label} [${ACTIVE.id}]` : "—"));
   L.push("Constants: " + (C.meta && C.meta.derived_from || "constants.json"));
+  if (C.meta && C.meta.status_banner) L.push("NOTE: " + C.meta.status_banner);
   L.push("");
   L.push("=== INPUTS ===");
   L.push(`Filter (observing):  ${inp.filter}`);
@@ -463,13 +547,17 @@ function exportResults() {
   L.push(`Readout mode:        ${inp.readmode}`);
   L.push(`Cooler temperature:  ${inp.cooltemp} C`);
   if (inp.ttype !== "extended") L.push(`Aperture:            ${inp.aperture} x FWHM`);
-  L.push(`Exposure structure:  ${inp.expmode}`);
-  if (inp.expmode === "total") {
-    L.push(`  total time:        ${inp.exptime} s`);
-    L.push(`  saturation limit:  ${inp.satlimit} %  (per sub)`);
-  } else {
-    L.push(`Solve mode:          ${inp.mode === "time" ? "exposure-from-SNR" : "SNR-from-exposure"}`);
-    if (inp.mode === "time") L.push(`Target SNR:          ${inp.snr}`);
+  const modeLabel = { single: "single exposure", snr: "target SNR",
+                      strategy: "observing strategy" }[inp.solvemode];
+  L.push(`Observing mode:      ${modeLabel}`);
+  if (inp.solvemode === "strategy") {
+    L.push(`  time basis:        ${inp.timebasis === "total" ? "total integration" : "per sub-exposure"}`);
+    if (inp.nauto) L.push(`  sub-count:         auto (≤ ${inp.satlimit} % full well per sub)`);
+    const solved = { snr: "SNR", exptime: "exposure time", nsub: "number of subs" }[r.solvedFor] || "—";
+    L.push(`  solved for:        ${solved}`);
+  }
+  if (inp.snr != null && isFinite(inp.snr) && r.solvedFor !== "snr") {
+    L.push(`Target SNR:          ${inp.snr}`);
   }
   L.push("");
   L.push("=== RESULTS ===");
@@ -501,7 +589,8 @@ function exportResults() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  a.href = url; a.download = `etc_${inp.filter}_${stamp}.txt`;
+  a.href = url;
+  a.download = `etc_${ACTIVE ? ACTIVE.id + "_" : ""}${inp.filter}_${stamp}.txt`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -510,13 +599,15 @@ function exportResults() {
 // Charts
 // ---------------------------------------------------------------------------
 const charts = {};
-const COL = { line: "#6366f1", pt: "#22d3ee", grid: "#2b3040", txt: "#9aa6bf" };
+const COL = { line: "#6366f1", pt: "#22d3ee", grid: "#2b3040", txt: "#9aa6bf",
+              panel: "#1f232f" };  // matches --panel-2; used as marker halo
 
 function baseOpts(xlabel, ylabel) {
+  // Chart title is shown in the HTML header above each canvas (so it stays
+  // visible when the plot is collapsed); we don't repeat it inside the chart.
   return {
     responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false },
-      title: { display: true, color: COL.txt, text: `${ylabel} vs ${xlabel}` } },
+    plugins: { legend: { display: false } },
     scales: {
       x: { type: "linear", title: { display: true, text: xlabel, color: COL.txt },
            ticks: { color: COL.txt }, grid: { color: COL.grid } },
@@ -527,14 +618,19 @@ function baseOpts(xlabel, ylabel) {
   };
 }
 
+// Chart.js dataset draw order: HIGHER order = drawn FIRST (background).
+// We give the marker the lowest order so it sits on top of the line, and add a
+// panel-coloured halo so the line clearly stops at the marker rather than
+// passing through it.
 function lineChart(id, xs, ys, xlabel, ylabel, marker) {
   const datasets = [
     { data: xs.map((x, i) => ({ x, y: ys[i] })), borderColor: COL.line,
-      borderWidth: 2, pointRadius: 0, tension: .2 },
+      borderWidth: 2, pointRadius: 0, tension: .2, order: 2 },
   ];
   if (marker && isFinite(marker.x) && isFinite(marker.y)) {
     datasets.push({ data: [{ x: marker.x, y: marker.y }], showLine: false,
-      pointBackgroundColor: COL.pt, pointRadius: 5 });
+      pointBackgroundColor: COL.pt, pointRadius: 6,
+      pointBorderColor: COL.panel, pointBorderWidth: 2, order: 0 });
   }
   if (charts[id]) charts[id].destroy();
   charts[id] = new Chart(document.getElementById(id),
@@ -543,13 +639,12 @@ function lineChart(id, xs, ys, xlabel, ylabel, marker) {
 
 function updateCharts(inp, r) {
   const np = r.nPix, Rsky = r.Rsky, Rdark = r.Rdark, Nread = r.Nread, S0 = r.signalRate;
-  // reads vs total time: grows as T/L for fixed-length subs; constant N for a
-  // fixed split; 1 for a single exposure.
-  const nReadsOf = (t) => {
-    if (inp.expmode === "nsub_len") return Math.max(1, t / r.tFrame);
-    if (inp.expmode === "split") return r.nSub;
-    return 1;
-  };
+  // reads vs total time: when the sub length is the fixed quantity the read
+  // count grows as T/L; otherwise the sub count stays put (1 for a single).
+  const subLenFixed = inp.solvemode === "strategy" &&
+    (inp.timebasis === "persub" || inp.nauto);
+  const nReadsOf = (t) =>
+    subLenFixed ? Math.max(1, t / r.tFrame) : Math.max(1, r.nSub);
 
   // SNR vs total exposure time
   const tMax = Math.max(r.t * 2.5, 5);
@@ -557,6 +652,23 @@ function updateCharts(inp, r) {
   lineChart("chart-time", ts,
     ts.map((t) => snrForTime(S0, t, np, Rsky, Rdark, Nread, nReadsOf(t))),
     "total exposure [s]", "SNR", { x: r.t, y: r.snr });
+
+  // Limiting in-band magnitude (S/N = SIGMA_LIM) vs total exposure time.
+  // Same setup (aperture, sub count, conditions); for an extended source the
+  // line is the limiting integrated mag inside the extraction aperture.
+  const limMagAt = (t, nReads) => {
+    if (t <= 0) return NaN;
+    const Bvar = np * (t * (Rsky + Rdark) + nReads * Nread * Nread);
+    const sLim = SIGMA_LIM * SIGMA_LIM / (2 * t) *
+                 (1 + Math.sqrt(1 + 4 * Bvar / (SIGMA_LIM * SIGMA_LIM)));
+    return magFor(sLim, inp.filter, inp.airmass);
+  };
+  const limYLabel = inp.ttype === "extended"
+    ? "lim integrated mag (S/N=5)" : "lim mag (S/N=5)";
+  const limMark = limMagAt(r.t, r.nSub);
+  lineChart("chart-mlim", ts,
+    ts.map((t) => limMagAt(t, nReadsOf(t))),
+    "total exposure [s]", limYLabel, { x: r.t, y: limMark });
 
   // SNR vs brightness (signal scales as 10^(0.4 (b0 - b)); fixed time & sub count)
   const blabel = inp.ttype === "extended"
@@ -588,11 +700,13 @@ function satChart(id, xs, ys, tMark, aduMark, xlabel) {
   const sat = C.camera.saturation_adu;
   const data = { datasets: [
     { data: xs.map((x, i) => ({ x, y: ys[i] })), borderColor: COL.line,
-      borderWidth: 2, pointRadius: 0, tension: .2 },
+      borderWidth: 2, pointRadius: 0, tension: .2, order: 2 },
     { data: [{ x: tMark, y: aduMark }], showLine: false,
-      pointBackgroundColor: COL.pt, pointRadius: 5 },
+      pointBackgroundColor: COL.pt, pointRadius: 6,
+      pointBorderColor: COL.panel, pointBorderWidth: 2, order: 0 },
     { data: [{ x: xs[0], y: sat }, { x: xs[xs.length - 1], y: sat }],
-      borderColor: "#ef4444", borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0 },
+      borderColor: "#ef4444", borderWidth: 1.5, borderDash: [6, 4],
+      pointRadius: 0, order: 3 },
   ] };
   if (charts[id]) charts[id].destroy();
   charts[id] = new Chart(document.getElementById(id), { type: "line", data, options: opts });
@@ -613,7 +727,6 @@ function noiseChart(id, noise) {
           fillStyle: colors[i], strokeStyle: colors[i], index: i,
         })),
       } },
-      title: { display: true, color: COL.txt, text: "Noise breakdown (variance %)" },
       tooltip: { callbacks: { label: (ctx) =>
         `${ctx.label}: ${(100 * ctx.parsed / total).toFixed(1)} %` } },
     },
@@ -676,39 +789,87 @@ function syncLabels() {
   document.getElementById("size-hint").textContent =
     SRC.SIZE_HINT[val("profile")] || "diameter";
 
-  // exposure-structure fields, per (solve mode, exposure structure)
-  const mode = inp.mode, em = inp.expmode;
+  // exposure fields, per observing mode
+  const sm = inp.solvemode, strategy = sm === "strategy";
   const show = (id, on) => document.getElementById(id).classList.toggle("hidden", !on);
-  show("f-satlimit", em === "total");
+  // Auto sub-count only applies to the total-time basis; clear it otherwise so a
+  // hidden-but-checked box can't silently drive the solve.
+  const nautoBox = document.getElementById("nauto");
+  if (!(strategy && inp.timebasis === "total")) nautoBox.checked = false;
+  const nauto = nautoBox.checked;
 
-  if (em === "total") {
-    // total is user-given; N is derived from saturation; solve-mode is ignored.
-    show("snr-input", false);
-    show("f-total", true);
-    show("f-sublen", false);
-    show("f-nsub", false);
-  } else {
-    show("snr-input", mode === "time");
-    if (mode === "time") {                       // total is solved -> hide it
-      show("f-total", false);
-      show("f-sublen", em === "nsub_len");
-      show("f-nsub", em === "split");
-    } else {                                     // exposure given -> compute SNR
-      show("f-total", em !== "nsub_len");
-      show("f-sublen", em === "nsub_len");
-      show("f-nsub", em !== "single");
-    }
-  }
-  document.getElementById("f-total").childNodes[0].nodeValue =
-    (em === "single" ? "Exposure time [s] " : "Total exposure time [s] ");
+  show("timebasis-row", strategy);
+  show("f-exptime", sm !== "snr");             // single & strategy use a time
+  show("f-nsub", strategy && !nauto);          // N only in strategy (auto hides it)
+  show("nauto-row", strategy && inp.timebasis === "total");
+  show("f-snr", sm !== "single");              // snr & strategy use a target SNR
+  show("f-satlimit", nauto);
+
+  // relabel the time field for its current meaning
+  const timeLabel = sm === "single" ? "Exposure time [s] "
+    : !strategy ? "Exposure time [s] "
+    : inp.timebasis === "total" ? "Total exposure time [s] "
+    : "Sub-exposure length [s] ";
+  document.getElementById("f-exptime").childNodes[0].nodeValue = timeLabel;
 }
 
 function setupConditionals() {
-  ["sed", "normmode", "expmode", "profile"].forEach((id) =>
+  ["sed", "normmode", "profile", "solvemode"].forEach((id) =>
     document.getElementById(id).addEventListener("change", syncLabels));
-  document.querySelectorAll('input[name="ttype"], input[name="mode"]').forEach((el) =>
+  document.querySelectorAll('input[name="ttype"], input[name="timebasis"]').forEach((el) =>
     el.addEventListener("change", syncLabels));
+  document.getElementById("nauto").addEventListener("change", syncLabels);
+  // When the user switches into strategy mode with all three fields filled it is
+  // overdetermined; clear the Target SNR so the default is the forward solve.
+  // Switching back to a mode that needs the SNR restores a sensible default.
+  document.getElementById("solvemode").addEventListener("change", (e) => {
+    const sm = e.target.value, snr = document.getElementById("snr");
+    if (sm === "strategy" && document.getElementById("exptime").value.trim() !== ""
+        && document.getElementById("nsub").value.trim() !== "" && snr.value.trim() !== "") {
+      snr.value = "";
+    } else if (sm === "snr" && snr.value.trim() === "") {
+      snr.value = "100";
+    }
+    recalc();
+  });
   document.getElementById("export-btn").addEventListener("click", exportResults);
+}
+
+// Per-chart show/hide. The collapsed state is persisted in localStorage so
+// the page comes back the way the user left it. When uncollapsing we trigger
+// a recompute so the canvas regets its size before Chart.js redraws.
+const COLLAPSE_KEY = "etc:charts-collapsed";
+function loadCollapsed() {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch (e) { return new Set(); }
+}
+function saveCollapsed(set) {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set])); }
+  catch (e) { /* private mode etc. — silently ignore */ }
+}
+function setupChartToggles() {
+  const collapsed = loadCollapsed();
+  document.querySelectorAll(".chart-box[data-chart]").forEach((box) => {
+    const id = box.dataset.chart;
+    const btn = box.querySelector(".chart-toggle");
+    if (!btn) return;
+    const apply = (isColl) => {
+      box.classList.toggle("collapsed", isColl);
+      btn.textContent = isColl ? "+" : "−"; // minus sign
+      btn.setAttribute("aria-expanded", isColl ? "false" : "true");
+    };
+    apply(collapsed.has(id));
+    btn.addEventListener("click", () => {
+      const isColl = !box.classList.contains("collapsed");
+      apply(isColl);
+      const set = loadCollapsed();
+      if (isColl) set.add(id); else set.delete(id);
+      saveCollapsed(set);
+      if (!isColl) recalc();  // canvas got its size back -> redraw
+    });
+  });
 }
 
 function setupAltitudeLink() {
@@ -720,13 +881,13 @@ function setupAltitudeLink() {
   alt.addEventListener("input", () => {
     const a = parseFloat(alt.value);
     if (isFinite(a) && a > 0 && a <= 90) {
-      air.value = (1 / Math.cos((90 - a) * Math.PI / 180)).toFixed(3);
+      air.value = altitudeToAirmass(a).toFixed(3);
     }
   });
   air.addEventListener("input", () => {
     const x = parseFloat(air.value);
     if (isFinite(x) && x >= 1) {
-      alt.value = (90 - Math.acos(Math.min(1, 1 / x)) * 180 / Math.PI).toFixed(1);
+      alt.value = airmassToAltitude(x).toFixed(1);
     }
   });
 }
@@ -739,14 +900,16 @@ function showFatalError(msg) {
   console.error(msg);
 }
 
-async function init() {
+// Load one instrument's constants into C and re-init everything that depends on
+// the instrument (filter/refband/readout-mode lists, header, provisional banner).
+async function loadInstrument(entry) {
   try {
-    const res = await fetch("constants.json");
+    const res = await fetch(entry.file);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     C = await res.json();
   } catch (err) {
     showFatalError(
-      `Could not load <code>constants.json</code> (${err.message}). ` +
+      `Could not load <code>${entry.file}</code> (${err.message}). ` +
       `Serve the <code>docs/</code> folder over HTTP and browse it via ` +
       `<code>http://localhost:&lt;port&gt;/</code> — open a terminal in ` +
       `<code>docs/</code>, run <code>python -m http.server 8000</code>, then ` +
@@ -754,21 +917,79 @@ async function init() {
       `on <code>file://</code> URLs.`);
     return;
   }
+  ACTIVE = entry;
+
+  // Filter + reference-band selects, from this instrument's characterised bands.
   const bands = Object.keys(C.filters).filter((f) => C.filters[f].zeropoint_mag_1es != null);
+  const bandOpts = bands.map((f) => `<option value="${f}">${f}</option>`).join("");
+  const filterSel = document.getElementById("filter");
+  const refbandSel = document.getElementById("refband");
+  filterSel.innerHTML = bandOpts;
+  filterSel.value = bands.includes("V") ? "V" : bands[0];
+  refbandSel.innerHTML = bandOpts;
+  refbandSel.value = bands.includes("V") ? "V" : bands[0];
 
-  const opts = bands.map((f) => `<option value="${f}">${f}</option>`).join("");
-  document.getElementById("filter").innerHTML = opts;
-  document.getElementById("filter").value = bands.includes("V") ? "V" : bands[0];
-  document.getElementById("refband").innerHTML = opts;
-  document.getElementById("refband").value = bands.includes("V") ? "V" : bands[0];
+  // Readout-mode select, from this camera's read_noise_e keys (1 for PICO, 2 for
+  // the 0.8 m). Kept in the constants so a camera swap needs no code change.
+  const modes = Object.keys(C.camera.read_noise_e || {});
+  const readSel = document.getElementById("readmode");
+  readSel.innerHTML = modes.map((m) => `<option value="${m}">${m}</option>`).join("");
+  readSel.value = modes[0];
+
+  // Header subtitle + provisional banner from the instrument metadata.
+  const sub = [
+    ACTIVE.label,
+    C.telescope && C.telescope.f_number ? `f/${C.telescope.f_number}` : null,
+    C.camera && C.camera.model ? C.camera.model : null,
+    C.meta && C.meta.derived_from ? `constants: ${C.meta.derived_from}` : null,
+  ].filter(Boolean).join(" · ");
+  const subEl = document.getElementById("instrument-sub");
+  if (subEl) subEl.textContent = sub;
+  const banner = document.getElementById("instrument-banner");
+  if (banner) {
+    const msg = C.meta && C.meta.status_banner;
+    banner.textContent = msg ? "⚠ " + msg : "";
+    banner.classList.toggle("hidden", !msg);
+  }
+
   populateSpectype("point");
+  syncLabels();
+  recalc();
+}
 
+async function init() {
+  try {
+    const res = await fetch("instruments.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    MANIFEST = await res.json();
+  } catch (err) {
+    showFatalError(
+      `Could not load <code>instruments.json</code> (${err.message}). ` +
+      `Serve the <code>docs/</code> folder over HTTP — open a terminal in ` +
+      `<code>docs/</code>, run <code>python -m http.server 8000</code>, then ` +
+      `open <code>http://localhost:8000/</code>. Browsers block <code>fetch()</code> ` +
+      `on <code>file://</code> URLs.`);
+    return;
+  }
+
+  // Instrument select, from the manifest.
+  const instSel = document.getElementById("instrument");
+  instSel.innerHTML = MANIFEST.instruments
+    .map((e) => `<option value="${e.id}">${e.label}</option>`).join("");
+  const byId = (id) => MANIFEST.instruments.find((e) => e.id === id);
+  const start = byId(MANIFEST.default) || MANIFEST.instruments[0];
+  instSel.value = start.id;
+  instSel.addEventListener("change", () => loadInstrument(byId(instSel.value)));
+
+  // One-time wiring (independent of the active instrument).
   setupConditionals();
   setupAltitudeLink();
-  syncLabels();
-  document.querySelectorAll("input, select").forEach((el) =>
-    el.addEventListener("input", recalc));
-  recalc();
+  setupChartToggles();
+  document.querySelectorAll("input, select").forEach((el) => {
+    if (el.id !== "instrument") el.addEventListener("input", recalc);
+  });
+
+  await loadInstrument(start);
 }
 
 init();

@@ -27,11 +27,36 @@
       All formulas point to the function that implements them in
       <a href="app.js"><code>app.js</code></a> or
       <a href="sources.js"><code>sources.js</code></a>.</p>
+    <p class="sub"><strong>Worked examples and live numbers on this page use the
+      Vienna&nbsp;0.8&nbsp;m.</strong> The same formalism applies to every
+      instrument; each instrument's own constants live in its file under
+      <code>instruments.json</code> (e.g. PICO's provisional values in
+      <code>instruments/pico_1.5m.json</code>).</p>
   </header>
 
   <main class="methods">
     <!-- ============================================================== -->
-    <section class="m-section">
+    <nav class="m-section toc" aria-label="Table of contents">
+      <h2>Contents</h2>
+      <ul class="toc-list">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#photometry">1. Photometry — magnitude to electron rate</a></li>
+        <li><a href="#noise-model">2. Noise model and the SNR equation</a></li>
+        <li><a href="#noise-breakdown">3. Noise breakdown</a></li>
+        <li><a href="#solve-time">4. Solving for exposure time</a></li>
+        <li><a href="#exposure-structures">5. Observing modes</a></li>
+        <li><a href="#saturation">6. Saturation and peak pixel</a></li>
+        <li><a href="#aperture">7. Aperture and pixel area</a></li>
+        <li><a href="#sky">8. Sky brightness — dark night plus moon</a></li>
+        <li><a href="#dark-current">9. Dark current versus temperature</a></li>
+        <li><a href="#limiting-mag">10. Limiting magnitude</a></li>
+        <li><a href="#sed">11. SED color helper (approximate)</a></li>
+        <li><a href="#constants">12. Constants in use</a></li>
+      </ul>
+    </nav>
+
+    <!-- ============================================================== -->
+    <section class="m-section" id="overview">
       <h2>Overview</h2>
       <p>The calculator evaluates the standard CCD signal-to-noise equation for a
         target observed through one of the broadband filters. The full chain is:</p>
@@ -49,12 +74,12 @@
       <p class="m-note">The math has not changed since the calculator was first
         deployed. Only the <em>numbers</em> behind the symbols change: the
         instrumental constants below are loaded live from
-        <a href="constants.json"><code>constants.json</code></a> so this page
-        always shows what the calculator is actually using.</p>
+        <a href="instruments/vienna_0.8m.json"><code>instruments/vienna_0.8m.json</code></a>
+        so this page always shows what the calculator is actually using.</p>
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="photometry">
       <h2>1. Photometry — magnitude to electron rate</h2>
       <p>For each broadband filter $f$ the pipeline measures a zero point
         $\mathrm{ZP}_f$ defined as the in-band magnitude that produces
@@ -80,7 +105,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="noise-model">
       <h2>2. Noise model and the SNR equation</h2>
       <p>The detector noise has four independent contributions, all in
         electrons:</p>
@@ -113,7 +138,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="noise-breakdown">
       <h2>3. Noise breakdown</h2>
       <p>The doughnut chart in the main app slices the total noise variance
         into its four contributions. Each is one term under the radical of the
@@ -199,7 +224,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="solve-time">
       <h2>4. Solving for exposure time</h2>
       <p>The "solve for time" mode inverts the SNR equation for $t$. The form of
         the solution depends on how $N_\mathrm{sub}$ scales with $t$.</p>
@@ -247,21 +272,33 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
-      <h2>5. Exposure structures</h2>
-      <p>Four sub-exposure modes are available
+    <section class="m-section" id="exposure-structures">
+      <h2>5. Observing modes</h2>
+      <p>The calculator offers three observing modes
         <span class="ref">(<code>resolveExposure</code>)</span>:</p>
       <ul>
-        <li><b>Single</b> — one frame of length $t$; read noise paid once.</li>
-        <li><b>Fixed sub-exposure length</b> — sub length $L$ is given;
-          $N_\mathrm{sub}$ is derived from the total time (rounded up to a whole
-          sub). Time-solve uses the linear closed form above.</li>
-        <li><b>Fixed number of subs</b> — $N_\mathrm{sub}$ is given; sub length
-          is $t/N_\mathrm{sub}$. Time-solve uses the quadratic.</li>
-        <li><b>Fixed total time, auto-size subs</b> — total $T$ is given;
-          $N_\mathrm{sub}$ is chosen as the smallest integer such that each sub
-          stays below the saturation safety threshold (default 70 % of full
-          well). See the worked example below.</li>
+        <li><b>Single exposure</b> — one frame of length $t$ is given
+          ($N_\mathrm{sub} = 1$, read noise paid once); the SNR is computed.</li>
+        <li><b>Target SNR</b> — a desired SNR is given; the single exposure time
+          that reaches it is solved (linear closed form above).</li>
+        <li><b>Observing strategy</b> — the three quantities {exposure time,
+          number of subs $N_\mathrm{sub}$, target SNR} are exposed and
+          <em>exactly one is left blank</em>; that one is solved from the other
+          two. A toggle sets whether the time field is the <b>per-sub length</b>
+          $L$ or the <b>total integration</b> $T = N_\mathrm{sub}\,L$. The three
+          solves are:
+          <ul>
+            <li>blank SNR — forward: compute SNR from $(T, N_\mathrm{sub})$.</li>
+            <li>blank time — solve $T$ for the target SNR at fixed
+              $N_\mathrm{sub}$ (the quadratic); report $L = T/N_\mathrm{sub}$.</li>
+            <li>blank $N_\mathrm{sub}$ — with $L$ fixed, solve the total
+              (linear form) and round up to a whole sub; with $T$ fixed, find the
+              most subs that still meet the target (SNR falls as
+              $N_\mathrm{sub}$ rises, since read noise is paid per sub).</li>
+          </ul>
+          An <b>Auto sub-count</b> option (total-time basis) instead sizes
+          $N_\mathrm{sub}$ from the saturation limit — see the worked example
+          below — leaving the SNR as the solved field.</li>
       </ul>
 
       <div class="worked">
@@ -286,7 +323,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="saturation">
       <h2>6. Saturation and peak pixel</h2>
       <p>The peak pixel accumulates source + sky + dark every second. For a
         point source the peak per-pixel rate is the central value of a Gaussian
@@ -313,7 +350,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="aperture">
       <h2>7. Aperture and pixel area</h2>
       <p>For a <b>point source</b> the extraction aperture is a circle of
         diameter $D = a \cdot \mathrm{FWHM}$ (with the user's multiplier $a$,
@@ -346,12 +383,12 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="sky">
       <h2>8. Sky brightness — dark night plus moon</h2>
       <p>The dark-sky electron rate per pixel
         $R_\mathrm{sky,dark}$ was measured on a moonless night (column
         <code>sky_rate_e_per_s_per_pix</code> in
-        <a href="constants.json"><code>constants.json</code></a>). The total
+        <a href="instruments/vienna_0.8m.json"><code>instruments/vienna_0.8m.json</code></a>). The total
         per-pixel sky rate used in the SNR equation is</p>
 
       $$ R_\mathrm{sky}(\mathrm{filter},b) \;=\; R_\mathrm{sky,dark}\,
@@ -402,7 +439,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="dark-current">
       <h2>9. Dark current versus temperature</h2>
       <p>The dark current is measured at one cooler set-point
         (<span data-c="camera|dark_ref_temp_c" data-dp="0"></span>&nbsp;°C). For
@@ -420,11 +457,11 @@
         $\Delta T_\mathrm{double} = $ <span data-c="camera|dark_doubling_kelvin" data-dp="1"></span>&nbsp;K
         — the latter is a typical literature value and should be replaced with a
         fit to darks taken at several cooler set-points (see
-        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>).</p>
+        <code>data_acquisition.md</code> in the project repository).</p>
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="limiting-mag">
       <h2>10. Limiting magnitude</h2>
       <p>The limiting magnitude reported in the results table is the faintest
         in-band point-source magnitude that reaches a fixed S/N
@@ -449,7 +486,7 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="sed">
       <h2>11. SED color helper (approximate)</h2>
       <p>If you know the magnitude in one band but want to observe in another,
         the calculator can apply an approximate color correction
@@ -489,14 +526,14 @@
     </section>
 
     <!-- ============================================================== -->
-    <section class="m-section">
+    <section class="m-section" id="constants">
       <h2>12. Constants in use</h2>
       <p>Values below are loaded live from
-        <a href="constants.json"><code>constants.json</code></a> and reflect
-        what the calculator is computing with right now. The
+        <a href="instruments/vienna_0.8m.json"><code>instruments/vienna_0.8m.json</code></a>
+        and reflect what the calculator is computing with right now. The
         <em>provisional</em> tags mark values that are either literature
         substitutes or single-measurement assumptions; see
-        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>
+        <code>data_acquisition.md</code> in the project repository
         for the acquisition plan that will replace them.</p>
 
       <h3>Camera</h3>
@@ -523,10 +560,10 @@
       </table>
 
       <p class="m-note">All numbers above flow from
-        <a href="../reduction/run_all.py"><code>reduction/run_all.py</code></a>,
+        <code>reduction/run_all.py</code>,
         which the README documents in detail. The <em>provisional</em> tags are
         the values flagged in
-        <a href="../data_acquisition.md"><code>data_acquisition.md</code></a>
+        <code>data_acquisition.md</code>
         as still needing dedicated calibration data.</p>
     </section>
 
