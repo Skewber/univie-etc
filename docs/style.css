@@ -301,6 +301,17 @@ table.kv td:last-child { text-align: right; font-variant-numeric: tabular-nums; 
 /* page-level provisional-instrument banner (between header and main) */
 #instrument-banner { margin: 1rem 2rem 0; }
 
+/* positive "imported from the almanac" banner */
+.handoff-banner {
+  margin: 1rem 2rem 0;
+  padding: .7rem .9rem;
+  border-radius: 8px;
+  font-size: .88rem;
+  border: 1px solid var(--accent-2);
+  background: rgba(34, 211, 238, .12);
+  color: #a5f3fc;
+}
+
 /* plots */
 .chart-grid {
   display: grid;

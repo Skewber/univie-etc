@@ -56,7 +56,9 @@
         <div class="group">
           <span class="group-title">Date &amp; time (UT)</span>
           <label>Universal Time
-            <input id="utdt" type="datetime-local" step="60" />
+            <input id="utdt" type="text" inputmode="numeric"
+                   placeholder="dd/mm/yyyy hh:mm" />
+            <small>UT, 24-hour clock (dd/mm/yyyy hh:mm)</small>
           </label>
           <div class="step-row">
             <button type="button" id="step-back" class="step-btn">&minus;</button>

@@ -1030,15 +1030,13 @@ function applyAlmanacHandoff(h) {
   set("moonillum", Math.min(1, Math.max(0, +h.moonillum)).toFixed(2));
   set("moonsep", Math.round(Math.min(180, Math.max(0, +h.moonsep))));
   recalc();
-  const banner = document.getElementById("instrument-banner");
+  // positive, dedicated banner — distinct from the red provisional-instrument one
+  const banner = document.getElementById("handoff-banner");
   if (banner) {
-    const note = "↘ Applied from the almanac: airmass " +
+    banner.innerHTML = "✓ Imported from the almanac: airmass " +
       (h.airmass != null ? (+h.airmass).toFixed(2) : "—") +
       ", Moon illumination " + Math.round((+h.moonillum || 0) * 100) + "%" +
       (h.moonsep != null ? ", separation " + Math.round(+h.moonsep) + "°" : "") + ".";
-    // keep any provisional-instrument banner; add the hand-off note below it.
-    const prior = banner.classList.contains("hidden") ? "" : banner.innerHTML + "<br>";
-    banner.innerHTML = prior + note;
     banner.classList.remove("hidden");
   }
 }

@@ -309,7 +309,7 @@ def main():
         page.wait_for_timeout(400)
 
         # daytime should raise a hard (red) warning
-        page.fill("#utdt", "2026-06-21T12:00")
+        page.fill("#utdt", "21/06/2026 12:00")
         page.wait_for_timeout(300)
         day_warn = page.inner_text("#alm-warnings")
         assert "Daytime" in day_warn, f"expected daytime warning, got {day_warn!r}"
@@ -319,7 +319,7 @@ def main():
         page.select_option("#coordfmt", "sexa")
         page.fill("#ra", "12:00:00")
         page.fill("#dec", "+60:00:00")
-        page.fill("#utdt", "2026-01-15T23:00")
+        page.fill("#utdt", "15/01/2026 23:00")
         page.wait_for_timeout(400)
         rows_txt = page.inner_text("#alm-rows")
         assert not page.locator("#use-in-etc").is_disabled(), "Use-in-ETC should be enabled"
@@ -332,7 +332,7 @@ def main():
         page.wait_for_url(f"http://127.0.0.1:{PORT}/index.html")
         page.wait_for_timeout(900)
         applied_air = float(page.input_value("#airmass"))
-        banner = page.inner_text("#instrument-banner")
+        banner = page.inner_text("#handoff-banner")
         print(f"[almanac->ETC] airmass={applied_air}  banner={banner[:60]!r}")
         assert 1.0 <= applied_air < 4.0, f"handed-off airmass implausible: {applied_air}"
         assert "almanac" in banner.lower(), f"hand-off banner missing: {banner!r}"

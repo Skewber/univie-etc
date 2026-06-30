@@ -233,8 +233,28 @@ let MANIFEST = null, ACTIVE = null, SITE = null;
 let visChart = null;
 const INSTRUMENT_KEY = "etc_instrument";
 const HANDOFF_KEY = "etc_almanac_handoff";
+const STATE_KEY = "etc_almanac_state";   // RA/Dec/format/UT, kept across page switches
 
 const $ = (id) => document.getElementById(id);
+
+// Persist the inputs so leaving for the calculator and coming back keeps them.
+function saveAlmanacState() {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify({
+      ra: $("ra").value, dec: $("dec").value,
+      coordfmt: $("coordfmt").value, utdt: $("utdt").value,
+    }));
+  } catch (e) { /* private mode */ }
+}
+function restoreAlmanacState() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem(STATE_KEY)); } catch (e) { return; }
+  if (!s) return;
+  if (s.coordfmt) $("coordfmt").value = s.coordfmt;
+  if (s.ra != null) $("ra").value = s.ra;
+  if (s.dec != null) $("dec").value = s.dec;
+  if (s.utdt) $("utdt").value = s.utdt;
+}
 
 /* ---------------- coordinate + time parsing/formatting ---------------- */
 function parseSexagesimal(str) {
@@ -290,17 +310,20 @@ function fmtDec(decDeg) {
 }
 const deg1 = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(1) + "°";
 
-// UT datetime-local <-> Date(UTC). The control's value is read as UT.
+// UT in European order "dd/mm/yyyy hh:mm" <-> Date(UTC); read as UT. Accepts
+// '/', '.' or '-' as date separators and an optional :ss.
 function readUT() {
-  const v = $("utdt").value;          // "YYYY-MM-DDTHH:MM"
+  const v = $("utdt").value.trim();
   if (!v) return null;
-  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  const m = v.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return null;
-  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+  const dd = +m[1], mo = +m[2], hh = +m[4];
+  if (mo < 1 || mo > 12 || dd < 1 || dd > 31 || hh > 23) return null; // reject US order etc.
+  return new Date(Date.UTC(+m[3], mo - 1, dd, hh, +m[5], +(m[6] || 0)));
 }
 function writeUT(date) {
-  $("utdt").value = `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-` +
-    `${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`;
+  $("utdt").value = `${pad2(date.getUTCDate())}/${pad2(date.getUTCMonth() + 1)}/` +
+    `${date.getUTCFullYear()} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`;
 }
 
 /* ---------------- visibility window ---------------- */
@@ -315,6 +338,7 @@ function visibilityWindow(date, site) {
 
 /* ---------------- the main compute + render ---------------- */
 function compute() {
+  saveAlmanacState();
   if (!SITE) return;
   const ut = readUT();
   const tgt = readTarget();
@@ -483,13 +507,24 @@ function drawVisibility(win, lat, lon, tgt, selUT) {
     },
     afterDatasetsDraw(chart) {
       const { ctx, chartArea: a, scales: { x } } = chart;
-      if (selHours >= xs[0] && selHours <= xs[xs.length - 1]) {
-        const px = x.getPixelForValue(selHours);
-        ctx.save();
-        ctx.strokeStyle = "#34d399"; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
-        ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
-        ctx.restore();
-      }
+      if (selHours < xs[0] || selHours > xs[xs.length - 1]) return;
+      const px = Math.round(x.getPixelForValue(selHours)) + 0.5;
+      ctx.save();
+      // bright vertical marker at the selected UT
+      ctx.strokeStyle = "#34d399"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
+      // pill label at the top of the line
+      ctx.setLineDash([]);
+      const label = "selected " + fmtHM(new Date(startUTms + selHours * 3600000)) + " UT";
+      ctx.font = "11px system-ui, sans-serif";
+      const w = ctx.measureText(label).width + 10;
+      let lx = px - w / 2;
+      lx = Math.max(a.left, Math.min(a.right - w, lx)); // keep on-canvas
+      ctx.fillStyle = "#34d399";
+      ctx.fillRect(lx, a.top + 2, w, 16);
+      ctx.fillStyle = "#06281d"; ctx.textBaseline = "middle"; ctx.textAlign = "center";
+      ctx.fillText(label, lx + w / 2, a.top + 10);
+      ctx.restore();
     },
   };
 
@@ -611,7 +646,8 @@ async function init() {
   sel.value = start.id;
   sel.addEventListener("change", () => loadInstrument(byId(sel.value)).catch(showErr));
 
-  // default UT = now (to the minute)
+  // restore previously entered RA/Dec/format/UT; default UT to now if none.
+  restoreAlmanacState();
   if (!$("utdt").value) writeUT(new Date());
 
   // wiring
