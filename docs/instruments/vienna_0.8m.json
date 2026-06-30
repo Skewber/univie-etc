@@ -1,0 +1,110 @@
+{
+  "telescope": {
+    "diameter_mm": 800.0,
+    "focal_length_mm": 6640.0,
+    "f_number": 8.3,
+    "pixel_size_um_unbinned": 9.0
+  },
+  "pixel_scale_arcsec_unbinned": 0.279576,
+  "reference_binning": 2,
+  "camera": {
+    "gain_e_per_adu": 1.5006,
+    "read_noise_e": {
+      "8 MHz": 19.476,
+      "1 MHz": 17.864
+    },
+    "dark_current_e_per_s_at_-5C": 0.3847,
+    "dark_ref_temp_c": -5.0,
+    "dark_doubling_kelvin": 6.3,
+    "readout_time_s": {
+      "8 MHz": 1.0,
+      "1 MHz": 8.0
+    },
+    "saturation_adu": 65535
+  },
+  "filters": {
+    "B": {
+      "zeropoint_mag_1es": 22.0801,
+      "extinction_k": 0.25,
+      "sky_rate_e_per_s_per_pix": 9.8647
+    },
+    "V": {
+      "zeropoint_mag_1es": 22.1237,
+      "extinction_k": 0.15,
+      "sky_rate_e_per_s_per_pix": 20.0567
+    },
+    "R": {
+      "zeropoint_mag_1es": 22.0336,
+      "extinction_k": 0.1,
+      "sky_rate_e_per_s_per_pix": 23.354
+    },
+    "I": {
+      "zeropoint_mag_1es": 21.4109,
+      "extinction_k": 0.06,
+      "sky_rate_e_per_s_per_pix": 5.4635
+    }
+  },
+  "meta": {
+    "derived_from": "2026-02-18 Vienna 0.8m observing run",
+    "gain_per_filter": {
+      "B": 1.4346,
+      "V": 1.4756,
+      "R": 1.5208,
+      "I": 1.528
+    },
+    "read_noise_adu": {
+      "8 MHz": 12.979,
+      "1 MHz": 11.905
+    },
+    "extinction_source": "typical literature k, ZP anchored on M67 (X=1.249)",
+    "n_stars_anchor": {
+      "B": 114,
+      "V": 229,
+      "R": 257,
+      "I": 261
+    },
+    "reference_fits": {
+      "data_derived_no_M50": {
+        "B": {
+          "zeropoint_mag_1es": 24.5896,
+          "extinction_k": 2.2412,
+          "fit_rms": 0.0616
+        },
+        "V": {
+          "zeropoint_mag_1es": 22.8736,
+          "extinction_k": 0.7502,
+          "fit_rms": 0.0414
+        },
+        "R": {
+          "zeropoint_mag_1es": 22.8181,
+          "extinction_k": 0.7314,
+          "fit_rms": 0.0589
+        },
+        "I": {
+          "zeropoint_mag_1es": 21.608,
+          "extinction_k": 0.2176,
+          "fit_rms": 0.0591
+        }
+      },
+      "data_derived_all_clusters": {
+        "B": {
+          "zeropoint_mag_1es": 23.4288,
+          "extinction_k": 1.2703
+        },
+        "V": {
+          "zeropoint_mag_1es": 23.4511,
+          "extinction_k": 1.2341
+        },
+        "R": {
+          "zeropoint_mag_1es": 23.2361,
+          "extinction_k": 1.0819
+        },
+        "I": {
+          "zeropoint_mag_1es": 22.5471,
+          "extinction_k": 1.0068
+        }
+      }
+    },
+    "notes": "INTERIM extinction: typical literature coefficients (B0.25/V0.15/R0.10/I0.06); the zero point is re-anchored on M67 so the ETC reproduces the measured throughput at that field. This night's data (3 fields, single airmass each, short baseline; M50 at 24 deg through horizon haze) could not constrain extinction reliably -- re-derive with more fields/airmasses and set USE_TYPICAL_EXTINCTION=False in run_all.py. reference_fits records what the data gave. Narrowband (OIII/Halpha/SII) not characterised (no data). Sky rate is representative of the night. R,I catalog mags via Lupton (2005) SDSS->Cousins transforms. Dark current vs temperature assumes a 6.3 K doubling around -5.0 C -- refine with multi-temperature darks."
+  }
+}

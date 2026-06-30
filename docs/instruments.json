@@ -1,0 +1,17 @@
+{
+  "default": "vienna_0.8m",
+  "instruments": [
+    {
+      "id": "vienna_0.8m",
+      "label": "Vienna 0.8 m",
+      "type": "imager",
+      "file": "instruments/vienna_0.8m.json"
+    },
+    {
+      "id": "lfoa_1.5m",
+      "label": "LFOA 1.5 m",
+      "type": "imager",
+      "file": "instruments/pico_1.5m.json"
+    }
+  ]
+}

@@ -22,7 +22,7 @@ function fmt(v, dp) {
 async function init() {
   let C;
   try {
-    const res = await fetch("constants.json");
+    const res = await fetch("instruments/vienna_0.8m.json");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     C = await res.json();
   } catch (err) {
@@ -39,9 +39,11 @@ async function init() {
     el.textContent = fmt(getPath(C, el.dataset.c), el.dataset.dp);
   });
 
-  // Sky-limited minimum sub length L_min = 10 * N_R^2 / R_sky (8 MHz readout).
-  // Keeps the worked example in Section 3 in sync with constants.json.
-  const NR8 = C.camera && C.camera.read_noise_e && C.camera.read_noise_e["8 MHz"];
+  // Sky-limited minimum sub length L_min = 10 * N_R^2 / R_sky (fast readout).
+  // Keeps the worked example in Section 3 in sync with constants.json. Uses the
+  // "8 MHz" mode when present (the 0.8 m), else the first available readout mode.
+  const rn = (C.camera && C.camera.read_noise_e) || {};
+  const NR8 = rn["8 MHz"] != null ? rn["8 MHz"] : rn[Object.keys(rn)[0]];
   document.querySelectorAll("span[data-lmin]").forEach((el) => {
     const filter = el.dataset.lmin;
     const Rsky = C.filters && C.filters[filter] && C.filters[filter].sky_rate_e_per_s_per_pix;

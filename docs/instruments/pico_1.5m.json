@@ -1,0 +1,41 @@
+{
+  "telescope": {
+    "diameter_mm": 1500.0,
+    "focal_length_mm": 12500.0,
+    "f_number": 8.33,
+    "pixel_size_um_unbinned": 6.5
+  },
+  "pixel_scale_arcsec_unbinned": 0.105,
+  "reference_binning": 1,
+  "camera": {
+    "model": "Andor Zyla 4.2-P (2048x2048 sCMOS)",
+    "gain_e_per_adu": 0.46,
+    "read_noise_e": {
+      "Zyla": 0.9
+    },
+    "dark_current_e_per_s_at_-5C": 0.1,
+    "dark_ref_temp_c": 0.0,
+    "dark_doubling_kelvin": 6.3,
+    "readout_time_s": {
+      "Zyla": 0.01
+    },
+    "saturation_adu": 65535
+  },
+  "filters": {
+    "V": {
+      "zeropoint_mag_1es": 23.92,
+      "extinction_k": 0.15,
+      "sky_rate_e_per_s_per_pix": 0.162
+    },
+    "R": {
+      "zeropoint_mag_1es": 23.83,
+      "extinction_k": 0.1,
+      "sky_rate_e_per_s_per_pix": 0.237
+    }
+  },
+  "meta": {
+    "derived_from": "PICO instrument spec sheet (detector/optics) + provisional photometry",
+    "status_banner": "PROVISIONAL — PICO detector & optics values are from the instrument spec sheet; the zero points, sky rate and extinction are ESTIMATED (not measured) and should not be used for calibrated photometry.",
+    "notes": "Detector/optics from spec: Andor Zyla 4.2-P 2048x2048 sCMOS, 6.5 um pixels, 0.9 e- read noise, >80% QE, 0.1 e-/px/s dark @ 0 C, 100 fps; 1.5 m f/8.33, 0.105 arcsec/px, 3.6 arcmin FoV. Sky/dark rates are stored per UNBINNED pixel (reference_binning=1). ASSUMED (not measured): full-well saturation ~30000 e- (gain 0.46 e-/ADU x 65535 ADU), dark doubling 6.3 K, readout 0.01 s (100 fps). Zero points are PROVISIONAL: scaled from the Vienna 0.8 m V/R zero points by the collecting-area ratio (1.5/0.8)^2 = 3.52 and an assumed QE ratio 0.82/0.55 = 1.49, i.e. +1.80 mag; replace with on-sky standards. Sky rates assume a typical dark-site surface brightness (mu_V~21.0, mu_R~20.5 mag/arcsec^2) folded through the provisional zero points + pixel scale. Extinction k are literature typical values. Only the two Bessel photometric filters (V, R) are modelled; the 4 polarisation filters (0/45/90/135 deg) and the coronagraphic masks (OD 5/8.75/12.5 mag; 1.5/3/6 arcsec) are NOT modelled in the ETC."
+  }
+}
