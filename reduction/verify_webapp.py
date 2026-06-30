@@ -285,6 +285,58 @@ def main():
         page.screenshot(path=os.path.join(ROOT, "reduction", "web_methods.png"),
                         full_page=True)
 
+        # 16. almanac page: site loads, ephemeris table + visibility plot compute,
+        # twilight/day warnings fire, and "Use in ETC" hands airmass + Moon
+        # geometry back to the calculator.
+        page.goto(f"http://127.0.0.1:{PORT}/almanac.html")
+        page.wait_for_timeout(800)
+        site = page.inner_text("#site-info")
+        n_rows = page.eval_on_selector_all("#alm-rows tr", "els => els.length")
+        vis_painted = page.evaluate(
+            "(() => { const c = document.getElementById('vis-chart');"
+            " return c && c.width > 0 && c.height > 0; })()")
+        print(f"\n[almanac] site={site[:40]!r}  rows={n_rows}  vis_painted={vis_painted}")
+        assert "Wien" in site, f"expected Vienna site, got {site!r}"
+        assert n_rows == 3, f"expected 3 ephemeris rows (Target/Moon/Sun), got {n_rows}"
+        assert vis_painted, "visibility chart canvas not painted"
+
+        # instrument switch updates the site
+        page.select_option("#instrument", "lfoa_1.5m")
+        page.wait_for_timeout(400)
+        site_lfoa = page.inner_text("#site-info")
+        assert "Figl" in site_lfoa or "Mitter" in site_lfoa, f"LFOA site not shown: {site_lfoa!r}"
+        page.select_option("#instrument", "vienna_0.8m")
+        page.wait_for_timeout(400)
+
+        # daytime should raise a hard (red) warning
+        page.fill("#utdt", "2026-06-21T12:00")
+        page.wait_for_timeout(300)
+        day_warn = page.inner_text("#alm-warnings")
+        assert "Daytime" in day_warn, f"expected daytime warning, got {day_warn!r}"
+
+        # circumpolar target on a winter night -> above horizon, valid airmass,
+        # Sun down (no day error). Then hand off to the ETC.
+        page.select_option("#coordfmt", "sexa")
+        page.fill("#ra", "12:00:00")
+        page.fill("#dec", "+60:00:00")
+        page.fill("#utdt", "2026-01-15T23:00")
+        page.wait_for_timeout(400)
+        rows_txt = page.inner_text("#alm-rows")
+        assert not page.locator("#use-in-etc").is_disabled(), "Use-in-ETC should be enabled"
+        print("  almanac ephemeris rows:", " | ".join(rows_txt.split(chr(10))[:6]))
+        page.screenshot(path=os.path.join(ROOT, "reduction", "web_almanac.png"),
+                        full_page=True)
+
+        # "Use in ETC" navigates to the calculator and applies the values
+        page.click("#use-in-etc")
+        page.wait_for_url(f"http://127.0.0.1:{PORT}/index.html")
+        page.wait_for_timeout(900)
+        applied_air = float(page.input_value("#airmass"))
+        banner = page.inner_text("#instrument-banner")
+        print(f"[almanac->ETC] airmass={applied_air}  banner={banner[:60]!r}")
+        assert 1.0 <= applied_air < 4.0, f"handed-off airmass implausible: {applied_air}"
+        assert "almanac" in banner.lower(), f"hand-off banner missing: {banner!r}"
+
         b.close()
 
     errs = [m for m in msgs if m[0] in ("error", "pageerror")]

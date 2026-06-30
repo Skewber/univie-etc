@@ -19,6 +19,10 @@ on GitHub Pages.
 docs/            static web ETC (deploy this to GitHub Pages)
   index.html
   app.js         ETC math + Chart.js plots
+  almanac.html
+  almanac.js     observing almanac (Sun/Moon, airmass, twilight, visibility plot)
+  methods.html
+  methods.js     formula/methods reference page
   style.css
   instruments.json        manifest: {default, instruments:[{id,label,type,file}]}
   instruments/
@@ -38,6 +42,19 @@ Each instrument is one JSON file with the same shape as `constants.json`
 `{id, label, type, file}` line to `docs/instruments.json`. To swap a camera,
 edit that one file. Set `meta.status_banner` to show a "provisional" notice. The
 `type` field (`imager`) is the extension point for a future spectrograph mode.
+Add a `site` block (`latitude_deg`, `longitude_deg`, `elevation_m`,
+`tz_standard_offset_hours`, `uses_eu_dst`) so the instrument is usable from the
+almanac page; without it the almanac shows a "no site" notice.
+
+### Almanac
+
+[`docs/almanac.html`](docs/almanac.html) is a standalone, offline observing
+almanac for the selected instrument's site. Enter a target RA/Dec and a UT
+instant; it computes the Sun and Moon positions, the target/Moon/Sun altitude,
+azimuth, airmass and rise/transit/set times, the lunar illuminated fraction and
+Moon–target separation, and a night-long visibility plot with twilight shading.
+It warns in twilight and flags daytime. **Use in ETC** carries the computed
+airmass and Moon illumination/separation back into the calculator.
 
 ## How the constants are derived
 

@@ -96,6 +96,20 @@ plate-solve + cross-match result — delete it to force a re-solve.
   into the JSON). This page is **anchored to the 0.8 m** as its worked example (its prose hardcodes the 8 MHz/1 MHz modes and
   B/V/R/I bands); the formalism is instrument-agnostic but the live numbers shown
   are the 0.8 m's.
+- **`almanac.html` + `almanac.js`** — a standalone observing-almanac page
+  (linked in the nav). Pure-JS, offline: given a target RA/Dec, a UT instant and
+  the active instrument's **`site`** block, it computes Sun/Moon positions
+  (low-precision Schlyter theory; the Sun/Moon mean elements count days from
+  JD 2451543.5, **not** J2000 — using J2000 lags the ecliptic longitude ~1.5°),
+  alt/az, Kasten-Young airmass, rise/transit/set (brute-force 1-min sampling),
+  lunar illuminated fraction + Moon–target separation, and a night-long altitude
+  visibility plot with twilight shading. "Use in ETC" writes
+  `localStorage["etc_almanac_handoff"]` (airmass + altitude + Moon
+  illumination/separation, consumed once by `app.js init()` if < 5 min old); both
+  pages persist the chosen instrument in `localStorage["etc_instrument"]`. The
+  almanac needs a `site` object (`latitude_deg`, `longitude_deg`, `elevation_m`,
+  `tz_standard_offset_hours`, `uses_eu_dst`) in each instrument file; an
+  instrument without one shows a "no site" banner instead.
 - **`chart.min.js`** — vendored Chart.js (offline, do not fetch from a CDN).
 
 ### Reduction pipeline (`reduction/`)

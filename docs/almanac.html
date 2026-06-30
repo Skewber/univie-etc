@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Almanac — Exposure Time Calculator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="almanac-body">
+  <header>
+    <nav class="nav-row">
+      <a href="index.html">&larr; Calculator</a>
+      <span class="nav-spacer"></span>
+      <a href="methods.html">Methods &amp; formalism &rarr;</a>
+    </nav>
+    <h1>Observing Almanac</h1>
+    <p class="sub">Target visibility, airmass, twilight and the Moon for the
+      selected instrument's site. Enter equatorial coordinates and a UT instant;
+      everything else is computed locally (no network).</p>
+  </header>
+
+  <div id="no-site" class="warning hidden">
+    ⚠ The selected instrument has no site coordinates in its constants file, so
+    the almanac cannot be computed. Add a <code>site</code> block (latitude,
+    longitude, elevation) to the instrument JSON.
+  </div>
+
+  <main class="almanac">
+    <!-- ---------------- INPUTS ---------------- -->
+    <section class="panel alm-inputs">
+      <div class="instrument-bar">
+        <label>Telescope / site
+          <select id="instrument"></select>
+        </label>
+        <span id="site-info" class="site-info"></span>
+      </div>
+
+      <div class="alm-input-grid">
+        <div class="group">
+          <span class="group-title">Target</span>
+          <label>Coordinate format
+            <select id="coordfmt">
+              <option value="sexa">Sexagesimal (h:m:s / d:m:s)</option>
+              <option value="deg">Decimal degrees</option>
+            </select>
+          </label>
+          <label>Right ascension &alpha;
+            <input id="ra" type="text" value="05:34:31" placeholder="e.g. 05:34:31 or 83.63" />
+          </label>
+          <label>Declination &delta;
+            <input id="dec" type="text" value="+22:00:52" placeholder="e.g. +22:00:52 or 22.01" />
+          </label>
+          <div id="out-target-coords" class="derived"></div>
+        </div>
+
+        <div class="group">
+          <span class="group-title">Date &amp; time (UT)</span>
+          <label>Universal Time
+            <input id="utdt" type="datetime-local" step="60" />
+          </label>
+          <div class="step-row">
+            <button type="button" id="step-back" class="step-btn">&minus;</button>
+            <input id="stepamt" type="number" value="1" min="1" step="1" class="step-amt" />
+            <select id="stepunit" class="step-unit">
+              <option value="min">min</option>
+              <option value="hour" selected>hour</option>
+              <option value="day">day</option>
+            </select>
+            <button type="button" id="step-fwd" class="step-btn">+</button>
+            <button type="button" id="now-btn" class="step-btn now">Now</button>
+          </div>
+          <table class="kv compact">
+            <tbody>
+              <tr><td>Local civil time</td><td id="out-lct">—</td></tr>
+              <tr><td>Local sidereal time</td><td id="out-lst">—</td></tr>
+              <tr><td>MJD</td><td id="out-mjd">—</td></tr>
+              <tr><td>JD</td><td id="out-jd">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="alm-warnings"></div>
+    </section>
+
+    <!-- ---------------- EPHEMERIS ---------------- -->
+    <section class="panel">
+      <div class="results-head">
+        <h2>Ephemeris</h2>
+        <button type="button" id="use-in-etc" disabled>Use in ETC &rarr;</button>
+      </div>
+
+      <div class="chips">
+        <div class="chip"><span class="chip-k">Moon</span><span id="out-moon">—</span></div>
+        <div class="chip"><span class="chip-k">Sun</span><span id="out-sun">—</span></div>
+      </div>
+
+      <div class="table-scroll">
+        <table class="alm-table">
+          <thead>
+            <tr>
+              <th>Object</th><th>Altitude</th><th>Azimuth</th><th>Zenith dist.</th>
+              <th>Airmass</th><th>Hour angle</th><th>Rise (UT)</th><th>Transit</th>
+              <th>Set (UT)</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="alm-rows"></tbody>
+        </table>
+      </div>
+      <p class="sub note">Rise / transit / set are for the night of the selected
+        civil date (local-noon to local-noon window). Sun uses an upper-limb
+        horizon of −0°.83; the Moon +0°.13. Airmass is Kasten &amp; Young (1989).
+        The Sun/Moon ephemerides are low-precision (≈arcminute).</p>
+    </section>
+
+    <!-- ---------------- VISIBILITY PLOT ---------------- -->
+    <section class="panel">
+      <h2>Visibility — altitude vs. time</h2>
+      <p class="sub note">Background shading: <span class="leg day">day</span>
+        <span class="leg civil">civil</span> <span class="leg naut">nautical</span>
+        <span class="leg astro">astronomical twilight</span>
+        <span class="leg night">night</span>. The green dashed line marks the
+        selected UT.</p>
+      <div class="vis-wrap"><canvas id="vis-chart"></canvas></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Low-precision Sun/Moon theory (Schlyter). Site coordinates come from the
+      instrument's <code>site</code> block in <code>instruments.json</code>.</p>
+  </footer>
+
+  <script src="chart.min.js"></script>
+  <script src="almanac.js"></script>
+</body>
+</html>

@@ -358,4 +358,83 @@ footer code { color: var(--accent-2); }
 @media (max-width: 700px) {
   .inputs { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
+  .almanac .alm-input-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------------- Almanac page ---------------- */
+.almanac {
+  display: flex; flex-direction: column; gap: 1rem;
+  padding: 1rem 2rem 2rem; max-width: 1400px; margin: 0 auto; width: 100%;
+}
+.almanac .site-info { font-size: .82rem; color: var(--muted); }
+.almanac .alm-input-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: .8rem;
+}
+.muted { color: var(--muted); }
+.sub.note { margin: .5rem 0 0; }
+
+/* time-step controls */
+.step-row { display: flex; align-items: center; gap: .4rem; margin-bottom: .6rem; flex-wrap: wrap; }
+.step-amt { width: 4rem; }
+.step-unit { width: auto; }
+.step-btn {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .35rem .7rem; font-size: .95rem; cursor: pointer; line-height: 1;
+}
+.step-btn:hover { border-color: var(--accent); }
+.step-btn.now { color: var(--accent-2); font-size: .8rem; }
+
+table.kv.compact td { padding: .2rem .2rem; }
+
+/* ephemeris chips */
+.chips { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .9rem; }
+.chip {
+  flex: 1 1 280px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 9px; padding: .5rem .7rem; font-size: .85rem;
+}
+.chip-k {
+  display: inline-block; min-width: 3.2rem; color: var(--accent-2);
+  font-size: .7rem; text-transform: uppercase; letter-spacing: 1px; margin-right: .4rem;
+}
+
+/* ephemeris table */
+.table-scroll { overflow-x: auto; }
+table.alm-table { width: 100%; border-collapse: collapse; font-size: .85rem; white-space: nowrap; }
+table.alm-table th, table.alm-table td {
+  padding: .4rem .55rem; border-bottom: 1px solid var(--border);
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+table.alm-table th {
+  color: var(--muted); font-weight: 600; font-size: .72rem;
+  text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border);
+}
+table.alm-table th:first-child, table.alm-table td:first-child { text-align: left; }
+table.alm-table td.obj { color: var(--accent-2); font-weight: 600; }
+table.alm-table td .muted { opacity: .55; }
+
+/* sky-state coloring */
+.st-day { color: #fca5a5; font-weight: 600; }
+.st-civil { color: #fcd34d; }
+.st-naut { color: #93c5fd; }
+.st-astro { color: #a5b4fc; }
+.st-night { color: #86efac; }
+
+/* visibility plot */
+.vis-wrap { position: relative; height: 460px; width: 100%; }
+.leg {
+  display: inline-block; padding: .05rem .4rem; border-radius: 4px;
+  margin: 0 .15rem; font-size: .8rem;
+}
+.leg.day { background: rgba(127,178,229,0.5); color: #08121e; }
+.leg.civil { background: rgba(91,135,189,0.6); color: #08121e; }
+.leg.naut { background: rgba(58,90,138,0.7); }
+.leg.astro { background: rgba(33,49,79,0.9); }
+.leg.night { background: rgba(8,10,16,0.95); border: 1px solid var(--border); }
+
+#use-in-etc {
+  background: var(--accent-2); color: #051018; border: 0; border-radius: 6px;
+  padding: .35rem .8rem; font-size: .85rem; cursor: pointer; font-weight: 600;
+}
+#use-in-etc:hover { filter: brightness(1.1); }
+#use-in-etc:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }

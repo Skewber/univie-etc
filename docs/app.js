@@ -8,6 +8,11 @@ let C = null;
 let MANIFEST = null;
 let ACTIVE = null;
 
+// Shared with almanac.js: persisted instrument choice and the one-shot
+// airmass/Moon hand-off ("Use in ETC").
+const INSTRUMENT_KEY = "etc_instrument";
+const HANDOFF_KEY = "etc_almanac_handoff";
+
 // S/N threshold used for the reported limiting magnitude.
 const SIGMA_LIM = 5;
 
@@ -918,6 +923,7 @@ async function loadInstrument(entry) {
     return;
   }
   ACTIVE = entry;
+  try { localStorage.setItem(INSTRUMENT_KEY, entry.id); } catch (e) { /* private mode */ }
 
   // Filter + reference-band selects, from this instrument's characterised bands.
   const bands = Object.keys(C.filters).filter((f) => C.filters[f].zeropoint_mag_1es != null);
@@ -977,7 +983,12 @@ async function init() {
   instSel.innerHTML = MANIFEST.instruments
     .map((e) => `<option value="${e.id}">${e.label}</option>`).join("");
   const byId = (id) => MANIFEST.instruments.find((e) => e.id === id);
-  const start = byId(MANIFEST.default) || MANIFEST.instruments[0];
+  // A hand-off from the almanac (airmass + Moon geometry) may name an
+  // instrument and a stored selection persists across pages.
+  const handoff = readAlmanacHandoff();
+  const stored = (() => { try { return localStorage.getItem(INSTRUMENT_KEY); } catch (e) { return null; } })();
+  const start = byId(handoff && handoff.instrument) || byId(stored)
+    || byId(MANIFEST.default) || MANIFEST.instruments[0];
   instSel.value = start.id;
   instSel.addEventListener("change", () => loadInstrument(byId(instSel.value)));
 
@@ -990,6 +1001,46 @@ async function init() {
   });
 
   await loadInstrument(start);
+  if (handoff) applyAlmanacHandoff(handoff);
+}
+
+// Read (and consume) the almanac hand-off if it is fresh (< 5 min old). The
+// payload carries the target's airmass/altitude and the Moon's illumination and
+// separation as computed for the chosen UT instant.
+function readAlmanacHandoff() {
+  let raw;
+  try { raw = localStorage.getItem(HANDOFF_KEY); } catch (e) { return null; }
+  if (!raw) return null;
+  try { localStorage.removeItem(HANDOFF_KEY); } catch (e) { /* ignore */ }
+  let h;
+  try { h = JSON.parse(raw); } catch (e) { return null; }
+  if (!h || !h.ts || Date.now() - h.ts > 5 * 60 * 1000) return null;
+  return h;
+}
+
+function applyAlmanacHandoff(h) {
+  const set = (id, v) => {
+    if (v == null || !isFinite(v)) return;
+    const el = document.getElementById(id);
+    if (el) el.value = v;
+  };
+  // airmass + its linked altitude (programmatic .value does not refire input)
+  if (h.airmass != null && isFinite(h.airmass)) set("airmass", (+h.airmass).toFixed(3));
+  if (h.altitude != null && isFinite(h.altitude)) set("altitude", (+h.altitude).toFixed(1));
+  set("moonillum", Math.min(1, Math.max(0, +h.moonillum)).toFixed(2));
+  set("moonsep", Math.round(Math.min(180, Math.max(0, +h.moonsep))));
+  recalc();
+  const banner = document.getElementById("instrument-banner");
+  if (banner) {
+    const note = "↘ Applied from the almanac: airmass " +
+      (h.airmass != null ? (+h.airmass).toFixed(2) : "—") +
+      ", Moon illumination " + Math.round((+h.moonillum || 0) * 100) + "%" +
+      (h.moonsep != null ? ", separation " + Math.round(+h.moonsep) + "°" : "") + ".";
+    // keep any provisional-instrument banner; add the hand-off note below it.
+    const prior = banner.classList.contains("hidden") ? "" : banner.innerHTML + "<br>";
+    banner.innerHTML = prior + note;
+    banner.classList.remove("hidden");
+  }
 }
 
 init();
