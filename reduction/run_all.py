@@ -107,6 +107,9 @@ def main():
             "pixel_size_um_unbinned": PIX_UM_UNBINNED,
         },
         "pixel_scale_arcsec_unbinned": round(pixscale, 6),
+        # Sky and dark rates below are measured at binning 2 (the run's binning);
+        # the web app scales them by (binning / reference_binning)^2.
+        "reference_binning": 2,
         "camera": {
             "gain_e_per_adu": gain,
             "read_noise_e": det["read_noise_e"],
@@ -152,10 +155,14 @@ def main():
         },
     }
 
-    out = os.path.join(fu.HERE, "constants.json")
-    with open(out, "w") as f:
-        json.dump(constants, f, indent=2)
-    print(f"\nWrote {out}")
+    # Write the pipeline output and propagate it to the web app in one step, so
+    # the two never drift (docs/instruments/vienna_0.8m.json is the deployed copy).
+    text = json.dumps(constants, indent=2)
+    for out in (os.path.join(fu.HERE, "constants.json"),
+                os.path.join(fu.HERE, "..", "docs", "instruments", "vienna_0.8m.json")):
+        with open(out, "w") as f:
+            f.write(text)
+        print(f"\nWrote {os.path.normpath(out)}")
     return constants
 
 

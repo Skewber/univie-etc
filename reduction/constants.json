@@ -6,6 +6,7 @@
     "pixel_size_um_unbinned": 9.0
   },
   "pixel_scale_arcsec_unbinned": 0.279576,
+  "reference_binning": 2,
   "camera": {
     "gain_e_per_adu": 1.5006,
     "read_noise_e": {
