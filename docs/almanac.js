@@ -327,11 +327,16 @@ function writeUT(date) {
 }
 
 /* ---------------- visibility window ---------------- */
-// 24 h window from local noon of the selected civil date, in UT.
+// 24 h window starting at the local noon at or before the selected instant, in
+// UT. Anchoring to the *preceding* noon (rather than the civil date's noon)
+// keeps a single night contiguous: an after-midnight time belongs to the night
+// that began the previous evening, so the selected-time marker always lands
+// inside the window instead of jumping forward when LCT crosses midnight.
 function visibilityWindow(date, site) {
   const co = civilOffset(date, site);
   const lc = new Date(date.getTime() + co.offsetHours * 3600000); // LCT wall-clock
-  const noonWall = Date.UTC(lc.getUTCFullYear(), lc.getUTCMonth(), lc.getUTCDate(), 12, 0, 0);
+  let noonWall = Date.UTC(lc.getUTCFullYear(), lc.getUTCMonth(), lc.getUTCDate(), 12, 0, 0);
+  if (lc.getTime() < noonWall) noonWall -= 24 * 3600000; // before local noon -> previous day's noon
   const startUT = new Date(noonWall - co.offsetHours * 3600000);
   return { start: startUT, offsetHours: co.offsetHours, tzName: co.name };
 }
