@@ -310,20 +310,31 @@ function fmtDec(decDeg) {
 }
 const deg1 = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(1) + "°";
 
-// UT in European order "dd/mm/yyyy hh:mm" <-> Date(UTC); read as UT. Accepts
-// '/', '.' or '-' as date separators and an optional :ss.
+// The <input type="datetime-local"> holds the site's *local civil time* as a
+// naive wall-clock ("YYYY-MM-DDThh:mm"). We convert LCT<->UT with the site's
+// civil offset (standard + EU summer time). The offset itself depends on the
+// instant, so for a given wall-clock we resolve DST from a standard-offset guess
+// (the transition hour is an inconsequential edge case for this tool).
+function civilOffsetForWall(wallMs) {
+  const std = (SITE && SITE.tz_standard_offset_hours) || 0;
+  if (!SITE || !SITE.uses_eu_dst) return std;
+  return euDstActive(new Date(wallMs - std * 3600000)) ? std + 1 : std;
+}
 function readUT() {
-  const v = $("utdt").value.trim();
+  const v = $("utdt").value;
   if (!v) return null;
-  const m = v.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return null;
-  const dd = +m[1], mo = +m[2], hh = +m[4];
-  if (mo < 1 || mo > 12 || dd < 1 || dd > 31 || hh > 23) return null; // reject US order etc.
-  return new Date(Date.UTC(+m[3], mo - 1, dd, hh, +m[5], +(m[6] || 0)));
+  const mo = +m[2], dd = +m[3], hh = +m[4];
+  if (mo < 1 || mo > 12 || dd < 1 || dd > 31 || hh > 23) return null;
+  const wallMs = Date.UTC(+m[1], mo - 1, dd, hh, +m[5], +(m[6] || 0)); // LCT wall
+  return new Date(wallMs - civilOffsetForWall(wallMs) * 3600000);
 }
 function writeUT(date) {
-  $("utdt").value = `${pad2(date.getUTCDate())}/${pad2(date.getUTCMonth() + 1)}/` +
-    `${date.getUTCFullYear()} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`;
+  const off = civilOffset(date, SITE || {}).offsetHours; // SITE null -> UT
+  const w = new Date(date.getTime() + off * 3600000);    // LCT wall-clock
+  $("utdt").value = `${w.getUTCFullYear()}-${pad2(w.getUTCMonth() + 1)}-` +
+    `${pad2(w.getUTCDate())}T${pad2(w.getUTCHours())}:${pad2(w.getUTCMinutes())}`;
 }
 
 /* ---------------- visibility window ---------------- */
@@ -350,18 +361,25 @@ function compute() {
   const warn = $("alm-warnings");
   warn.innerHTML = "";
 
-  if (!ut) { warn.innerHTML = `<div class="input-warning">Enter a valid UT date/time.</div>`; return; }
+  if (!ut) { warn.innerHTML = `<div class="input-warning">Enter a valid date and time.</div>`; return; }
 
   const lat = SITE.latitude_deg, lon = SITE.longitude_deg;
   const co = civilOffset(ut, SITE);
   const lst = lstDeg(ut, lon);
 
-  // time readouts
+  // input hint: which civil timezone the wall-clock is being read as
+  const tzHint = $("tz-hint");
+  if (tzHint) {
+    const sgn = co.offsetHours >= 0 ? "+" : "−";
+    tzHint.textContent = `read as ${co.name} (UTC${sgn}${Math.abs(co.offsetHours)}), ` +
+      `the site's wall-clock time`;
+  }
+
+  // time readouts (UT ⇐ the LCT you entered)
   $("out-mjd").textContent = mjdFromDate(ut).toFixed(5);
   $("out-jd").textContent = jdFromDate(ut).toFixed(5);
   $("out-lst").textContent = fmtHoursHMS(lst / 15).replace("+", "");
-  $("out-lct").textContent = fmtHM(ut, co.offsetHours) + " " + co.name +
-    `  (${new Date(ut.getTime() + co.offsetHours * 3600000).toUTCString().slice(5, 16)})`;
+  $("out-lct").textContent = fmtHM(ut, 0) + " UT  (" + ut.toUTCString().slice(5, 16) + ")";
 
   // bodies
   const sun = sunPos(ut), moon = moonPos(ut), illum = moonIllumination(ut);
@@ -443,9 +461,10 @@ function compute() {
   }
   warn.innerHTML = W.join("");
 
-  // enable hand-off only when the target is observable
+  // enable hand-off + the transit jump only when a target is defined
   const canHand = !!tgt;
   $("use-in-etc").disabled = !canHand;
+  $("transit-btn").disabled = !canHand;
   window.__almHandoff = canHand ? {
     // only an above-horizon target has a meaningful altitude/airmass to send;
     // Moon geometry is handed off regardless.
@@ -520,7 +539,7 @@ function drawVisibility(win, lat, lon, tgt, selUT) {
       ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
       // pill label at the top of the line
       ctx.setLineDash([]);
-      const label = "selected " + fmtHM(new Date(startUTms + selHours * 3600000)) + " UT";
+      const label = fmtHM(new Date(startUTms + selHours * 3600000)) + " UT";
       ctx.font = "11px system-ui, sans-serif";
       const w = ctx.measureText(label).width + 10;
       let lx = px - w / 2;
@@ -563,6 +582,18 @@ function drawVisibility(win, lat, lon, tgt, selUT) {
           },
           grid: { color: "rgba(255,255,255,0.06)" },
         },
+        x2: {
+          type: "linear", position: "top", min: 0, max: 24,
+          title: {
+            display: true, color: "#9aa6bf",
+            text: "Local civil time (" + win.tzName + ")",
+          },
+          ticks: {
+            color: "#9aa6bf", maxRotation: 0, autoSkip: false, stepSize: 2,
+            callback: (v) => fmtHM(new Date(startUTms + v * 3600000), win.offsetHours),
+          },
+          grid: { drawOnChartArea: false },
+        },
         y: {
           min: 0, max: 90,
           title: { display: true, text: "Altitude [°]", color: "#9aa6bf" },
@@ -587,6 +618,47 @@ function drawVisibility(win, lat, lon, tgt, selUT) {
   visChart = new Chart($("vis-chart").getContext("2d"), cfg);
 }
 
+/* ---------------- "Tonight": jump to the start of the night ----------------
+ * The start of the observable night = end of evening astronomical twilight (Sun
+ * descending through −18°) for the night containing the currently-selected
+ * instant. If the site has no astronomical darkness on that date (high-latitude
+ * summer), fall back to solar anti-transit — the darkest moment of the night. */
+function solarAntiTransit(win, site) {
+  let best = 1e9, bt = win.start;
+  for (let k = 0; k <= 24 * 60; k += 2) {
+    const t = new Date(win.start.getTime() + k * 60000);
+    const p = sunPos(t);
+    const alt = altaz(p.ra, p.dec, lstDeg(t, site.longitude_deg), site.latitude_deg).alt;
+    if (alt < best) { best = alt; bt = t; }
+  }
+  return bt;
+}
+function tonight() {
+  if (!SITE) return;
+  const base = readUT() || new Date();
+  const win = visibilityWindow(base, SITE);
+  const rts = riseTransitSet(sunPos, SITE.latitude_deg, SITE.longitude_deg, win.start, -18);
+  const start = (rts.set && !rts.circumpolar && !rts.neverUp)
+    ? rts.set                       // evening astronomical twilight ends here
+    : solarAntiTransit(win, SITE);  // no true darkness -> darkest moment instead
+  writeUT(start);
+  compute();
+}
+
+/* ---------------- "Transit": jump to the target's culmination ----------------
+ * The meridian transit (hour angle 0) is the target's highest point / lowest
+ * airmass in the night containing the selected instant. Needs a valid target;
+ * the button is disabled otherwise (see compute()). */
+function transitJump() {
+  if (!SITE) return;
+  const tgt = readTarget();
+  if (!tgt) return;
+  const base = readUT() || new Date();
+  const win = visibilityWindow(base, SITE);
+  const rts = riseTransitSet(() => tgt, SITE.latitude_deg, SITE.longitude_deg, win.start, 0);
+  if (rts.transit) { writeUT(rts.transit); compute(); }
+}
+
 /* ---------------- time-step buttons ---------------- */
 function stepTime(dir) {
   const ut = readUT(); if (!ut) return;
@@ -595,6 +667,46 @@ function stepTime(dir) {
   const mult = unit === "min" ? 60000 : unit === "hour" ? 3600000 : 86400000;
   writeUT(new Date(ut.getTime() + dir * amt * mult));
   compute();
+}
+
+/* ---------------- object-name resolver (CDS Sesame) ---------------- */
+// The one place the almanac touches the network. Sesame resolves a name to
+// J2000 RA/Dec (degrees) across SIMBAD/NED/VizieR; we fill the coordinate
+// inputs honoring the current format. Failures (incl. CORS on static hosts)
+// surface as an inline message and never break the offline ephemeris.
+function fillTarget(raDeg, decDeg) {
+  if ($("coordfmt").value === "deg") {
+    $("ra").value = raDeg.toFixed(5);
+    $("dec").value = decDeg.toFixed(5);
+  } else {
+    $("ra").value = fmtRA(raDeg);
+    $("dec").value = fmtDec(decDeg).replace("−", "-"); // input parser wants ASCII minus
+  }
+}
+async function resolveName() {
+  const name = $("target-name").value.trim();
+  const status = $("resolve-status");
+  if (!name) { status.textContent = ""; return; }
+  status.textContent = "resolving…";
+  status.className = "resolve-status busy";
+  try {
+    const url = "https://cds.unistra.fr/cgi-bin/nph-sesame/-oI/SNV?" +
+      encodeURIComponent(name);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const txt = await res.text();
+    // Sesame prints "%J <ra_deg> <dec_deg> ..." for the resolved position.
+    const m = txt.match(/%J\s+([+-]?\d+\.?\d*)\s+([+-]?\d+\.?\d*)/);
+    if (!m) throw new Error("name not found");
+    fillTarget(norm360(parseFloat(m[1])), parseFloat(m[2]));
+    status.textContent = "✓ resolved " + name;
+    status.className = "resolve-status ok";
+    compute();
+  } catch (e) {
+    status.textContent = "✗ " + e.message +
+      " — check the name, or the network may be blocked (CORS) on this host.";
+    status.className = "resolve-status err";
+  }
 }
 
 /* ---------------- hand-off to the ETC ---------------- */
@@ -617,14 +729,16 @@ async function loadInstrument(entry) {
 
   const siteEl = $("site-info");
   if (SITE) {
-    siteEl.innerHTML = `<b>${SITE.name}</b> · ${SITE.latitude_deg.toFixed(4)}°N ` +
-      `${SITE.longitude_deg.toFixed(4)}°E · ${SITE.elevation_m} m` +
-      (SITE.comment ? `<br><span class="muted">${SITE.comment}</span>` : "");
+    const la = SITE.latitude_deg, lo = SITE.longitude_deg;
+    siteEl.textContent = `${Math.abs(la).toFixed(4)}°${la >= 0 ? "N" : "S"} ` +
+      `${Math.abs(lo).toFixed(4)}°${lo >= 0 ? "E" : "W"} · ${SITE.elevation_m} m`;
     $("no-site").classList.add("hidden");
   } else {
     siteEl.textContent = "";
     $("no-site").classList.remove("hidden");
   }
+  // now that SITE is known, LCT<->UT is well-defined: default an empty field.
+  if (!$("utdt").value) writeUT(new Date());
   compute();
 }
 
@@ -651,17 +765,23 @@ async function init() {
   sel.value = start.id;
   sel.addEventListener("change", () => loadInstrument(byId(sel.value)).catch(showErr));
 
-  // restore previously entered RA/Dec/format/UT; default UT to now if none.
+  // restore previously entered RA/Dec/format/time (the default "now" is written
+  // in loadInstrument, once SITE is known so LCT<->UT is correct).
   restoreAlmanacState();
-  if (!$("utdt").value) writeUT(new Date());
 
   // wiring
   ["ra", "dec", "coordfmt", "utdt"].forEach((id) =>
     $(id).addEventListener("input", compute));
   $("now-btn").addEventListener("click", () => { writeUT(new Date()); compute(); });
+  $("tonight-btn").addEventListener("click", tonight);
+  $("transit-btn").addEventListener("click", transitJump);
   $("step-back").addEventListener("click", () => stepTime(-1));
   $("step-fwd").addEventListener("click", () => stepTime(1));
   $("use-in-etc").addEventListener("click", useInEtc);
+  $("resolve-btn").addEventListener("click", resolveName);
+  $("target-name").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); resolveName(); }
+  });
 
   await loadInstrument(start).catch(showErr);
 }

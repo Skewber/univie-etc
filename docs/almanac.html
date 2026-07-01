@@ -15,8 +15,9 @@
     </nav>
     <h1>Observing Almanac</h1>
     <p class="sub">Target visibility, airmass, twilight and the Moon for the
-      selected instrument's site. Enter equatorial coordinates and a UT instant;
-      everything else is computed locally (no network).</p>
+      selected instrument's site. Enter equatorial coordinates (or resolve a
+      name) and a local civil time; the ephemeris is computed locally. Only the
+      optional name search reaches the network (CDS Sesame).</p>
   </header>
 
   <div id="no-site" class="warning hidden">
@@ -38,6 +39,14 @@
       <div class="alm-input-grid">
         <div class="group">
           <span class="group-title">Target</span>
+          <label>Resolve by name
+            <div class="resolve-row">
+              <input id="target-name" type="text"
+                     placeholder="e.g. M42, NGC 7000, Vega" />
+              <button type="button" id="resolve-btn" class="step-btn">Search</button>
+            </div>
+            <small id="resolve-status" class="resolve-status"></small>
+          </label>
           <label>Coordinate format
             <select id="coordfmt">
               <option value="sexa">Sexagesimal (h:m:s / d:m:s)</option>
@@ -54,11 +63,10 @@
         </div>
 
         <div class="group">
-          <span class="group-title">Date &amp; time (UT)</span>
-          <label>Universal Time
-            <input id="utdt" type="text" inputmode="numeric"
-                   placeholder="dd/mm/yyyy hh:mm" />
-            <small>UT, 24-hour clock (dd/mm/yyyy hh:mm)</small>
+          <span class="group-title">Date &amp; time (local civil time)</span>
+          <label>Local civil time
+            <input id="utdt" type="datetime-local" step="60" />
+            <small id="tz-hint">the site's wall-clock time (incl. summer time)</small>
           </label>
           <div class="step-row">
             <button type="button" id="step-back" class="step-btn">&minus;</button>
@@ -69,11 +77,13 @@
               <option value="day">day</option>
             </select>
             <button type="button" id="step-fwd" class="step-btn">+</button>
+            <button type="button" id="tonight-btn" class="step-btn now">Tonight</button>
+            <button type="button" id="transit-btn" class="step-btn now" disabled>Transit</button>
             <button type="button" id="now-btn" class="step-btn now">Now</button>
           </div>
           <table class="kv compact">
             <tbody>
-              <tr><td>Local civil time</td><td id="out-lct">—</td></tr>
+              <tr><td>Universal Time</td><td id="out-lct">—</td></tr>
               <tr><td>Local sidereal time</td><td id="out-lst">—</td></tr>
               <tr><td>MJD</td><td id="out-mjd">—</td></tr>
               <tr><td>JD</td><td id="out-jd">—</td></tr>

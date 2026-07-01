@@ -378,10 +378,23 @@ footer code { color: var(--accent-2); }
   padding: 1rem 2rem 2rem; max-width: 1400px; margin: 0 auto; width: 100%;
 }
 .almanac .site-info { font-size: .82rem; color: var(--muted); }
+/* auto-fit: two columns when there's room, one when the viewport is narrow
+   (e.g. phones) — no reliance on a single hard breakpoint. */
 .almanac .alm-input-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: .8rem;
+  display: grid; gap: .8rem; margin-top: .8rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
 }
+.almanac .group { min-width: 0; }               /* allow columns to shrink */
+.almanac input, .almanac select { max-width: 100%; box-sizing: border-box; }
 .muted { color: var(--muted); }
+
+/* name resolver */
+.resolve-row { display: flex; gap: .4rem; align-items: stretch; }
+.resolve-row input { flex: 1 1 auto; min-width: 0; }
+.resolve-status { display: block; margin-top: .25rem; font-size: .78rem; min-height: 1em; }
+.resolve-status.busy { color: var(--muted); }
+.resolve-status.ok { color: var(--accent-2); }
+.resolve-status.err { color: #f7a08a; }
 .sub.note { margin: .5rem 0 0; }
 
 /* time-step controls */

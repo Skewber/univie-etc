@@ -97,13 +97,19 @@ plate-solve + cross-match result — delete it to force a re-solve.
   B/V/R/I bands); the formalism is instrument-agnostic but the live numbers shown
   are the 0.8 m's.
 - **`almanac.html` + `almanac.js`** — a standalone observing-almanac page
-  (linked in the nav). Pure-JS, offline: given a target RA/Dec, a UT instant and
-  the active instrument's **`site`** block, it computes Sun/Moon positions
-  (low-precision Schlyter theory; the Sun/Moon mean elements count days from
-  JD 2451543.5, **not** J2000 — using J2000 lags the ecliptic longitude ~1.5°),
-  alt/az, Kasten-Young airmass, rise/transit/set (brute-force 1-min sampling),
-  lunar illuminated fraction + Moon–target separation, and a night-long altitude
-  visibility plot with twilight shading. "Use in ETC" writes
+  (linked in the nav). Pure-JS: given a target RA/Dec, an instant and the active
+  instrument's **`site`** block, it computes Sun/Moon positions (low-precision
+  Schlyter theory; the Sun/Moon mean elements count days from JD 2451543.5,
+  **not** J2000 — using J2000 lags the ecliptic longitude ~1.5°), alt/az,
+  Kasten-Young airmass, rise/transit/set (brute-force 1-min sampling), lunar
+  illuminated fraction + Moon–target separation, and a night-long altitude
+  visibility plot with twilight shading (bottom axis UT, top axis LCT). The
+  date/time field (`#utdt`) is a `datetime-local` read as the site's **local
+  civil time** (LCT↔UT via `civilOffsetForWall`/`civilOffset`, incl. EU summer
+  time); the readout table shows the derived UT. The ephemeris is fully local;
+  the **only** network call is the optional object-name resolver (`resolveName`,
+  CDS Sesame `nph-sesame` → J2000 RA/Dec), which fails gracefully (incl. CORS on
+  static hosts) and never blocks the offline ephemeris. "Use in ETC" writes
   `localStorage["etc_almanac_handoff"]` (airmass + altitude + Moon
   illumination/separation, consumed once by `app.js init()` if < 5 min old); both
   pages persist the chosen instrument in `localStorage["etc_instrument"]`. The

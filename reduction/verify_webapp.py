@@ -296,7 +296,7 @@ def main():
             "(() => { const c = document.getElementById('vis-chart');"
             " return c && c.width > 0 && c.height > 0; })()")
         print(f"\n[almanac] site={site[:40]!r}  rows={n_rows}  vis_painted={vis_painted}")
-        assert "Wien" in site, f"expected Vienna site, got {site!r}"
+        assert "48.2316" in site, f"expected Vienna coordinates, got {site!r}"
         assert n_rows == 3, f"expected 3 ephemeris rows (Target/Moon/Sun), got {n_rows}"
         assert vis_painted, "visibility chart canvas not painted"
 
@@ -304,12 +304,31 @@ def main():
         page.select_option("#instrument", "lfoa_1.5m")
         page.wait_for_timeout(400)
         site_lfoa = page.inner_text("#site-info")
-        assert "Figl" in site_lfoa or "Mitter" in site_lfoa, f"LFOA site not shown: {site_lfoa!r}"
+        assert "48.0817" in site_lfoa, f"LFOA coordinates not shown: {site_lfoa!r}"
         page.select_option("#instrument", "vienna_0.8m")
         page.wait_for_timeout(400)
 
-        # daytime should raise a hard (red) warning
-        page.fill("#utdt", "21/06/2026 12:00")
+        # object-name resolver (CDS Sesame): network-dependent, so we only assert
+        # the path runs and reports a status (✓ or an error) without a JS crash.
+        # On a host where the network / CORS blocks it, the error branch is fine.
+        page.fill("#target-name", "M42")
+        page.click("#resolve-btn")
+        page.wait_for_timeout(3000)
+        rstat = page.inner_text("#resolve-status")
+        print(f"[almanac] name-resolve status: {rstat!r}")
+        assert rstat.strip() != "", "resolver produced no status text"
+
+        # "Tonight" jumps to the start of the observable night — never daylight.
+        page.click("#tonight-btn")
+        page.wait_for_timeout(400)
+        tonight_warn = page.inner_text("#alm-warnings")
+        assert "Daytime" not in tonight_warn, f"'Tonight' landed in daylight: {tonight_warn!r}"
+        print(f"[almanac] tonight -> {page.input_value('#utdt')!r}")
+
+        # daytime should raise a hard (red) warning. #utdt is now a
+        # datetime-local read as the site's LOCAL CIVIL time (Vienna CEST=+2 in
+        # June, so 12:00 local = 10:00 UT — still full daylight).
+        page.fill("#utdt", "2026-06-21T12:00")
         page.wait_for_timeout(300)
         day_warn = page.inner_text("#alm-warnings")
         assert "Daytime" in day_warn, f"expected daytime warning, got {day_warn!r}"
@@ -319,11 +338,19 @@ def main():
         page.select_option("#coordfmt", "sexa")
         page.fill("#ra", "12:00:00")
         page.fill("#dec", "+60:00:00")
-        page.fill("#utdt", "15/01/2026 23:00")
+        page.fill("#utdt", "2026-01-15T23:00")
         page.wait_for_timeout(400)
         rows_txt = page.inner_text("#alm-rows")
         assert not page.locator("#use-in-etc").is_disabled(), "Use-in-ETC should be enabled"
         print("  almanac ephemeris rows:", " | ".join(rows_txt.split(chr(10))[:6]))
+
+        # "Transit" jumps the target to its culmination -> hour angle ~ 0.
+        assert not page.locator("#transit-btn").is_disabled(), "Transit should be enabled with a target"
+        page.click("#transit-btn")
+        page.wait_for_timeout(400)
+        ha = page.inner_text("#alm-rows tr:first-child td:nth-child(6)").strip()
+        print("  transit hour angle:", ha)
+        assert ha[1:].startswith("0:0"), f"|hour angle| should be ~0 at transit, got {ha!r}"
         page.screenshot(path=os.path.join(ROOT, "reduction", "web_almanac.png"),
                         full_page=True)
 
